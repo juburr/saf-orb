@@ -1,0 +1,66 @@
+description: >
+  Exports HDF results with one of the SAF CLI's hdf2<format> converters: a
+  STIG Viewer checklist (ckl), XCCDF results (xccdf), CSV, an HTML report or
+  a CAAT spreadsheet. The SAF CLI's converters exit 0 even when they fail, so
+  this step checks what they wrote. Needs the install command first.
+parameters:
+  input:
+    type: string
+    default: ""
+    description: >
+      The HDF files to export: paths or globs, separated by commas, spaces or
+      newlines. Empty: the files the last convert step wrote
+      (SAF_HDF_FILES). Environment variables are expanded.
+  format:
+    type: enum
+    enum: [ckl, xccdf, csv, html, caat]
+    description: >
+      ckl, xccdf and csv write a file per HDF file (.ckl, .xml, .csv); html
+      and caat put every HDF file in one (.html, .xlsx). The SAF CLI 1.5.3
+      has no html.
+  extra_args:
+    type: string
+    default: ""
+    description: >
+      The format's own options, split like shell words: for ckl, the asset
+      and STIG metadata (--metadata with a file from saf generate
+      ckl_metadata, --hostname, --ip, --fqdn, --role, --marking and the
+      others hdf2ckl takes); for csv, --fields and --noTruncate; for html,
+      --type Executive, Manager or Administrator. Environment variables are
+      expanded.
+  output_dir:
+    type: string
+    default: /tmp/saf-reports
+    description: >
+      Absolute path of the directory for the exports. Not expanded, since the
+      store step reads it as given.
+  report_name:
+    type: string
+    default: ""
+    description: >
+      The exports' name. Empty: each HDF file's own name (results.json gives
+      results.ckl), and for html and caat the first HDF file's. With several
+      HDF files and a per-file format, <report_name>-<HDF file's name>.
+  store_artifacts:
+    type: boolean
+    default: true
+    description: >
+      Store output_dir as job artifacts.
+steps:
+  - run:
+      name: SAF CLI export (<< parameters.format >>)
+      environment:
+        PARAM_EXTRA_ARGS: << parameters.extra_args >>
+        PARAM_FORMAT: << parameters.format >>
+        PARAM_INPUT: << parameters.input >>
+        PARAM_OUTPUT_DIR: << parameters.output_dir >>
+        PARAM_REPORT_NAME: << parameters.report_name >>
+        SCRIPT_SAF_LIB: << include(scripts/lib/saf.sh) >>
+      command: << include(scripts/export.sh) >>
+  - when:
+      condition: << parameters.store_artifacts >>
+      steps:
+        - store_artifacts:
+            path: << parameters.output_dir >>
+            destination: saf-reports
+            when: always

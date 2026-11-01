@@ -1,0 +1,33 @@
+description: >
+  Convert a scanner's results to HDF and fail the build on them: here Grype's
+  JSON, checked against thresholds that allow no critical or high
+  vulnerability. Each vulnerability is a failed control in the HDF. The
+  summary prints the counts in the job's log, and every report is stored as
+  artifacts under saf-reports/.
+
+usage:
+  version: 2.1
+  orbs:
+    saf: juburr/saf-orb@0.1.0
+  jobs:
+    scan:
+      docker:
+        - image: cimg/base:current
+      steps:
+        - checkout
+        - run:
+            name: Scan the image with Grype
+            command: grype registry.example.com/app:1.2.3 -o json > grype.json
+        - saf/install
+        - saf/convert:
+            from: anchoregrype
+            input: grype.json
+            store_artifacts: false
+        - saf/summary:
+            store_artifacts: false
+        - saf/threshold:
+            template_inline: "{failed.critical.max: 0}, {failed.high.max: 0}"
+  workflows:
+    scan:
+      jobs:
+        - scan

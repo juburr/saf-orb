@@ -1,0 +1,95 @@
+description: >
+  Uploads HDF results to a Heimdall server through its API, with an API key:
+  each file becomes an evaluation, whose URL is printed and exported. Every
+  file is checked to be HDF first, and an upload is never retried. Needs the
+  install command first, and the server's API_KEY_SECRET set so it takes API
+  keys.
+parameters:
+  url:
+    type: string
+    description: >
+      The Heimdall server's address, such as https://heimdall.example.com:
+      https, or http to this machine only. Environment variables are
+      expanded.
+  api_key:
+    type: env_var_name
+    default: HEIMDALL_API_KEY
+    description: >
+      The environment variable holding a Heimdall API key, from a context.
+      Evaluations are stored as its owner's (a user's or a group's).
+  input:
+    type: string
+    default: ""
+    description: >
+      The HDF files to upload: paths or globs, separated by commas, spaces or
+      newlines. Empty: the files the last convert step wrote
+      (SAF_HDF_FILES). Environment variables are expanded.
+  public:
+    type: boolean
+    default: false
+    description: >
+      Make the evaluations public: readable by every user of the server.
+  evaluation_tags:
+    type: string
+    default: ""
+    description: >
+      Tags for the evaluations, separated by commas or newlines, such as the
+      branch or build. Environment variables are expanded.
+  groups:
+    type: string
+    default: ""
+    description: >
+      IDs of Heimdall groups to add the evaluations to, separated by commas
+      or spaces; the key's owner must be able to add to them. A group's API
+      key adds them to that group instead. Environment variables are
+      expanded.
+  timeout:
+    type: string
+    default: "600"
+    description: >
+      Seconds each request may take. Environment variables are expanded.
+  evaluation_urls_env_var:
+    type: env_var_name
+    default: HEIMDALL_EVALUATION_URLS
+    description: >
+      The environment variable to export the evaluations' URLs in, separated
+      by spaces, for later steps.
+  output_dir:
+    type: string
+    default: /tmp/saf-reports
+    description: >
+      Absolute path of the directory for <report_name>.json, which lists the
+      evaluations. Not expanded, since the store step reads it as given.
+  report_name:
+    type: string
+    default: heimdall
+    description: >
+      The list's name.
+  store_artifacts:
+    type: boolean
+    default: true
+    description: >
+      Store output_dir as job artifacts.
+steps:
+  - run:
+      name: Upload to Heimdall
+      environment:
+        PARAM_API_KEY: << parameters.api_key >>
+        PARAM_EVALUATION_TAGS: << parameters.evaluation_tags >>
+        PARAM_EVALUATION_URLS_ENV_VAR: << parameters.evaluation_urls_env_var >>
+        PARAM_GROUPS: << parameters.groups >>
+        PARAM_INPUT: << parameters.input >>
+        PARAM_OUTPUT_DIR: << parameters.output_dir >>
+        PARAM_PUBLIC: << parameters.public >>
+        PARAM_REPORT_NAME: << parameters.report_name >>
+        PARAM_TIMEOUT: << parameters.timeout >>
+        PARAM_URL: << parameters.url >>
+        SCRIPT_SAF_LIB: << include(scripts/lib/saf.sh) >>
+      command: << include(scripts/upload_heimdall.sh) >>
+  - when:
+      condition: << parameters.store_artifacts >>
+      steps:
+        - store_artifacts:
+            path: << parameters.output_dir >>
+            destination: saf-reports
+            when: always

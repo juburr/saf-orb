@@ -1,0 +1,372 @@
+version: 2.1
+orbs:
+  # Your orb will be automatically injected here during the pipeline.
+  # Reference your orb's jobs and commands below as they will exist when built.
+  orb-tools: circleci/orb-tools@12.5
+  # The orb definition is intentionally not included here. It will be injected into the pipeline.
+  saf-orb: {}
+
+# Use this tag to ensure test jobs always run,
+# even though the downstream publish job will only run on release tags.
+filters: &filters
+  tags:
+    only: /.*/
+
+# Filter for release tags.
+release-filters: &release-filters
+  branches:
+    ignore: /.*/
+  tags:
+    only: /^v[0-9]+\.[0-9]+\.[0-9]+$/
+
+commands:
+  # Downloads the SAF CLI's own sample data to ~/samples (see tests/fetch_samples.sh).
+  fetch-samples:
+    steps:
+      - run:
+          name: Fetch The SAF CLI's Sample Data
+          command: bash tests/fetch_samples.sh ~/samples
+
+jobs:
+  # Installs the default version on cimg/base, which has no Node.js, and checks it is the package the
+  # checksum table pins, that a second install takes it from the cache, and that the oldest listed
+  # release installs too.
+  install-test:
+    docker:
+      - image: cimg/base:current
+    steps:
+      - checkout
+      - saf-orb/install
+      - run:
+          name: Verify The Install
+          command: |
+            version=$(grep -A3 '^  version:' src/commands/install.yml | sed -n 's/^    default: "\(.*\)"$/\1/p')
+            [[ "$(command -v saf)" == "${HOME}/.saf-orb/bin/saf" ]]
+            saf --version | tee /tmp/version.log
+            grep -q "^@mitre/saf/${version} " /tmp/version.log
+            expected=$(grep -F "[\"${version}/amd64\"]" src/scripts/install.sh | cut -d'"' -f4)
+            [[ "$(jq -r .sha512 ~/.saf-orb/.saf-orb)" == "${expected}" ]]
+            [[ "$(ls ~/.saf-orb/bin)" == saf ]]
+      - run:
+          name: Verify A Second Install Uses The Cache
+          command: |
+            version=$(grep -A3 '^  version:' src/commands/install.yml | sed -n 's/^    default: "\(.*\)"$/\1/p')
+            PARAM_VERSION="${version}" PARAM_VERIFY_CHECKSUMS=strict PARAM_INSTALL_PATH="" PARAM_CACHING=true \
+              PARAM_DOWNLOAD_BASE_URL="" bash src/scripts/install.sh 2>&1 | tee /tmp/second-install.log
+            grep -q "from the cache." /tmp/second-install.log
+            if grep -q "^Downloading" /tmp/second-install.log; then
+              echo "FAIL: the second install downloaded the SAF CLI again."
+              exit 1
+            fi
+      - saf-orb/install:
+          version: 1.5.3
+          install_path: ~/saf-1.5.3
+      - run:
+          name: Verify The Oldest Listed Release Installs
+          command: ~/saf-1.5.3/bin/saf --version | grep -q '^@mitre/saf/1.5.3 '
+  # An unlisted release (1.6.0) fails closed before anything is downloaded, and known_versions
+  # installs it with a warning. Then a local HTTPS mirror in GitHub's layout serves the real
+  # release, which installs, and one with a changed byte, which doesn't.
+  checksum-test:
+    docker:
+      - image: cimg/python:3.13
+    steps:
+      - checkout
+      - run:
+          name: An Unlisted Release Is Refused Before Downloading
+          command: |
+            cd "$(mktemp -d)"
+            if HOME="$(pwd)" PARAM_INSTALL_PATH="$(pwd)/saf" PARAM_VERIFY_CHECKSUMS=strict PARAM_VERSION=1.6.0 \
+                PARAM_CACHING=true PARAM_DOWNLOAD_BASE_URL="" bash ~/project/src/scripts/install.sh > install.log 2>&1; then
+              cat install.log
+              echo "FAIL: the unlisted 1.6.0 installed with verify_checksums: strict."
+              exit 1
+            fi
+            cat install.log
+            grep -q "This orb has no checksum for SAF CLI 1.6.0" install.log
+            if [[ -n "$(ls -A | grep -vx install.log)" ]]; then
+              echo "FAIL: install downloaded or installed something before refusing 1.6.0."
+              ls -laR
+              exit 1
+            fi
+      - saf-orb/install:
+          version: 1.6.0
+          verify_checksums: known_versions
+          install_path: ~/saf-1.6.0
+          caching: false
+      - run:
+          name: Verify known_versions Installed It
+          command: ~/saf-1.6.0/bin/saf --version | grep -q '^@mitre/saf/1.6.0 '
+      - run:
+          name: A Mirror Serves The Release, And A Changed Package Is Rejected
+          command: |
+            REPO_DIR=$(pwd)
+            VERSION=$(grep -A3 '^  version:' src/commands/install.yml | sed -n 's/^    default: "\(.*\)"$/\1/p')
+            ASSET="saf-${VERSION}-amd64.deb"
+            MIRROR=$(mktemp -d)
+            DIR="${MIRROR}/www/github/mitre/saf/releases/download/${VERSION}"
+            mkdir -p "${DIR}"
+            curl --fail --silent --show-error --location --proto '=https' --output "${DIR}/${ASSET}" \
+              "https://github.com/mitre/saf/releases/download/${VERSION}/${ASSET}"
+            openssl req -x509 -newkey rsa:2048 -nodes -keyout "${MIRROR}/key.pem" -out "${MIRROR}/cert.pem" -days 1 \
+              -subj /CN=localhost -addext subjectAltName=DNS:localhost 2> /dev/null
+            cat > "${MIRROR}/serve.py" \<< 'EOF'
+            import functools, http.server, ssl, sys
+            handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=sys.argv[1])
+            server = http.server.HTTPServer(("127.0.0.1", 8443), handler)
+            context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+            context.load_cert_chain(sys.argv[2], sys.argv[3])
+            server.socket = context.wrap_socket(server.socket, server_side=True)
+            server.serve_forever()
+            EOF
+            python3 "${MIRROR}/serve.py" "${MIRROR}/www" "${MIRROR}/cert.pem" "${MIRROR}/key.pem" > "${MIRROR}/serve.log" 2>&1 &
+            SERVER=$!
+            trap 'kill "${SERVER}"' EXIT
+            sleep 2
+            install_from_mirror() {
+              rm -rf "${MIRROR}/saf"
+              CURL_CA_BUNDLE="${MIRROR}/cert.pem" PARAM_INSTALL_PATH="${MIRROR}/saf" PARAM_VERIFY_CHECKSUMS=strict \
+                PARAM_VERSION="${VERSION}" PARAM_CACHING=false PARAM_DOWNLOAD_BASE_URL=https://localhost:8443/github \
+                bash "${REPO_DIR}/src/scripts/install.sh"
+            }
+            install_from_mirror 2>&1 | tee "${MIRROR}/good.log"
+            grep -q "Downloading https://localhost:8443/github/mitre/saf/releases/download/${VERSION}/${ASSET}" "${MIRROR}/good.log"
+            "${MIRROR}/saf/bin/saf" --version | grep -q "^@mitre/saf/${VERSION} "
+            printf 'x' >> "${DIR}/${ASSET}"
+            if install_from_mirror > "${MIRROR}/bad.log" 2>&1; then
+              cat "${MIRROR}/bad.log"
+              echo "FAIL: a changed release from the mirror was installed."
+              exit 1
+            fi
+            cat "${MIRROR}/bad.log"
+            grep -q "Checksum verification failed." "${MIRROR}/bad.log"
+  # Installs on an Arm machine, so the arm64 package is chosen and verified, takes it from the cache
+  # the second time, and converts and checks results with it.
+  arm64-test:
+    machine:
+      image: ubuntu-2404:current
+    resource_class: arm.medium
+    steps:
+      - checkout
+      - saf-orb/install
+      - saf-orb/install
+      - run:
+          name: Verify The arm64 Install
+          command: |
+            [[ "$(uname -m)" == aarch64 ]]
+            version=$(grep -A3 '^  version:' src/commands/install.yml | sed -n 's/^    default: "\(.*\)"$/\1/p')
+            expected=$(grep -F "[\"${version}/arm64\"]" src/scripts/install.sh | cut -d'"' -f4)
+            [[ "$(jq -r '.sha512 + " " + .arch' ~/.saf-orb/.saf-orb)" == "${expected} arm64" ]]
+            saf --version | grep -q "^@mitre/saf/${version} linux-arm64 "
+      - fetch-samples
+      - saf-orb/convert:
+          from: sarif
+          input: ~/samples/sarif_input.sarif
+      - saf-orb/threshold:
+          input: ~/samples/red_hat_good.json
+          template_file: ~/samples/red_hat_good.counts.good.yml
+  # Runs every command with the real SAF CLI on the SAF CLI's own sample data: six converters (one
+  # writing a file per host), threshold checks that pass and fail (SAF's own templates), a summary
+  # and every export format. tests/check_pipeline.sh checks what they wrote. Steps that must fail
+  # run through tests/run_command.sh. Then the run records are checked against the schema.
+  pipeline-test:
+    docker:
+      - image: cimg/python:3.13
+    steps:
+      - checkout
+      - saf-orb/install
+      - fetch-samples
+      - saf-orb/convert:
+          from: sarif
+          input: ~/samples/sarif_input.sarif
+      - saf-orb/convert:
+          from: anchoregrype
+          input: ~/samples/anchore_grype.json
+          report_name: grype
+      - saf-orb/convert:
+          from: xccdf_results
+          input: ~/samples/xccdf-results-openscap-rhel8.xml
+          report_name: openscap
+      - saf-orb/convert:
+          from: zap
+          input: ~/samples/webgoat.json
+          extra_args: --name http://mymac.com:8191
+      - saf-orb/convert:
+          from: ckl
+          input: ~/samples/small_ckl_overrides.ckl
+      - saf-orb/convert:
+          from: nessus
+          input: ~/samples/sample.nessus
+      - run:
+          name: Verify convert Exported The Nessus Files
+          command: |
+            [[ "$(printf '%s\n' "${SAF_HDF_FILES}" | wc -l)" -eq 3 ]]
+            printf '%s\n' "${SAF_HDF_FILES}" | grep -qx /tmp/saf-reports/nessus-10.0.0.1.json
+      # The summary of the Nessus hosts, from SAF_HDF_FILES.
+      - saf-orb/summary:
+          report_name: nessus-summary
+      - saf-orb/threshold:
+          input: ~/samples/red_hat_good.json
+          template_file: ~/samples/red_hat_good.counts.good.yml
+          report_name: good
+          run_record: true
+      - saf-orb/threshold:
+          input: ~/samples/rhel-8_hardened.json
+          template_file: ~/samples/rhel-8_hardened.counts.good.exact.yml
+          report_name: exact
+      - saf-orb/threshold:
+          input: ~/samples/rhel-8_hardened.json
+          template_file: ~/samples/rhel-8_hardened.counts.bad.noimpactHigh.yml
+          report_name: bad
+          report_only: true
+          run_record: true
+      - saf-orb/summary:
+          input: ~/samples/red_hat_good.json ~/samples/rhel-8_hardened.json
+          formats: json markdown yaml
+      - saf-orb/export:
+          input: ~/samples/red_hat_good.json
+          format: ckl
+          extra_args: --hostname web01 --role Workstation
+      - saf-orb/export:
+          input: ~/samples/red_hat_good.json
+          format: xccdf
+      - saf-orb/export:
+          input: ~/samples/red_hat_good.json
+          format: csv
+      - saf-orb/export:
+          input: ~/samples/red_hat_good.json
+          format: html
+          extra_args: --type Executive
+      - saf-orb/export:
+          input: ~/samples/red_hat_good.json ~/samples/rhel-8_hardened.json
+          format: caat
+          report_name: caat
+      - run:
+          name: Check What The Pipeline Wrote
+          command: bash tests/check_pipeline.sh /tmp/saf-reports
+      - run:
+          name: Thresholds Not Met Fail The Step
+          command: |
+            set +e
+            bash tests/run_command.sh threshold input="${HOME}/samples/rhel-8_hardened.json" \
+              template_file="${HOME}/samples/rhel-8_hardened.counts.bad.noimpactHigh.yml" \
+              output_dir=/tmp/failing report_name=bad > /tmp/bad.log 2>&1
+            status=$?
+            set -e
+            cat /tmp/bad.log
+            [[ "${status}" -eq 1 ]]
+            grep -q "ERROR: 1 file does not meet the thresholds." /tmp/bad.log
+      - run:
+          name: A Threshold The SAF CLI Would Skip Is Refused
+          command: |
+            printf 'failed:\n  critical:\n    maximum: 0\n' > /tmp/typo.yml
+            set +e
+            bash tests/run_command.sh threshold input="${HOME}/samples/red_hat_good.json" template_file=/tmp/typo.yml \
+              output_dir=/tmp/failing > /tmp/typo.log 2>&1
+            status=$?
+            set -e
+            cat /tmp/typo.log
+            [[ "${status}" -eq 2 ]]
+            grep -q "failed.critical.maximum is not a threshold the SAF CLI checks" /tmp/typo.log
+      - run:
+          name: A Conversion That Fails Fails The Step, Though The SAF CLI Exits 0
+          command: |
+            set +e
+            bash tests/run_command.sh convert from=zap input="${HOME}/samples/sarif_input.sarif" \
+              "extra_args=--name http://mymac.com:8191" output_dir=/tmp/failing > /tmp/convert.log 2>&1
+            status=$?
+            set -e
+            cat /tmp/convert.log
+            [[ "${status}" -eq 1 ]]
+            grep -q "could not convert" /tmp/convert.log
+            [[ ! -e /tmp/failing/zap.json ]]
+      - run:
+          name: Check The Run Records Against The Schema
+          command: |
+            python3 -m pip install --quiet jsonschema==4.26.0
+            for record in /tmp/saf-reports/*.run-record.json; do
+              python3 -c 'import json, sys, jsonschema; jsonschema.validate(json.load(open(sys.argv[2])), json.load(open(sys.argv[1])))' \
+                schemas/run-record.v1.json "${record}"
+              echo "ok: ${record}"
+            done
+  # Starts Heimdall 2.15.0 and PostgreSQL in Docker (tests/heimdall_server.sh), uploads HDF results
+  # with an API key, and reads the evaluations back through Heimdall's API. A wrong key must fail.
+  heimdall-test:
+    machine:
+      image: ubuntu-2404:current
+    steps:
+      - checkout
+      - saf-orb/install
+      - fetch-samples
+      - run:
+          name: Start Heimdall
+          command: |
+            bash tests/heimdall_server.sh ~/heimdall
+            printf 'export HEIMDALL_API_KEY=%q\n' "$(cat ~/heimdall/api-key)" >> "${BASH_ENV}"
+      - saf-orb/convert:
+          from: sarif
+          input: ~/samples/sarif_input.sarif
+      - saf-orb/upload_heimdall:
+          url: http://localhost:3000
+          input: ~/samples/red_hat_good.json /tmp/saf-reports/sarif.json
+          evaluation_tags: saf-orb,ci ${CIRCLE_BUILD_NUM}
+      - run:
+          name: Read The Evaluations Back
+          command: |
+            [[ "$(wc -w \<<< "${HEIMDALL_EVALUATION_URLS}")" -eq 2 ]]
+            jq -e '.uploads | length == 2' /tmp/saf-reports/heimdall.json
+            for id in $(jq -r '.uploads[].id' /tmp/saf-reports/heimdall.json); do
+              curl -sS --fail -H @"${HOME}/heimdall/bearer" "http://localhost:3000/evaluations/${id}" > "/tmp/evaluation-${id}.json"
+              jq -c '{filename, public, tags: [.evaluationTags[].value]}' "/tmp/evaluation-${id}.json"
+            done
+            jq -s -e --arg tag "ci ${CIRCLE_BUILD_NUM}" '
+              (map(.filename) | sort) == ["red_hat_good.json", "sarif.json"]
+              and all(.[]; .public == false and ([.evaluationTags[].value] | sort) == ([$tag, "saf-orb"] | sort))' \
+              /tmp/evaluation-*.json
+      - run:
+          name: A Wrong API Key Fails The Step
+          command: |
+            set +e
+            HEIMDALL_API_KEY=not-a-key bash tests/run_command.sh upload_heimdall url=http://localhost:3000 \
+              input="${HOME}/samples/red_hat_good.json" output_dir=/tmp/failing > /tmp/wrong-key.log 2>&1
+            status=$?
+            set -e
+            cat /tmp/wrong-key.log
+            [[ "${status}" -eq 1 ]]
+            grep -q "Heimdall refused the API key" /tmp/wrong-key.log
+            if grep -q not-a-key /tmp/wrong-key.log; then
+              echo "FAIL: the key was shown."
+              exit 1
+            fi
+
+workflows:
+  test-deploy:
+    jobs:
+      # Make sure to include "filters: *filters" in every test job you want to run as part of your deployment.
+      - install-test:
+          filters: *filters
+      - checksum-test:
+          filters: *filters
+      - arm64-test:
+          filters: *filters
+      - pipeline-test:
+          filters: *filters
+      - heimdall-test:
+          filters: *filters
+      # The orb must be re-packed for publishing, and saved to the workspace.
+      - orb-tools/pack:
+          filters: *release-filters
+      - orb-tools/publish:
+          orb_name: juburr/saf-orb
+          vcs_type: << pipeline.project.type >>
+          pub_type: production
+          # Ensure this job requires all test jobs and the pack job.
+          requires:
+            - orb-tools/pack
+            - install-test
+            - checksum-test
+            - arm64-test
+            - pipeline-test
+            - heimdall-test
+          context: orb-publishing
+          filters: *release-filters

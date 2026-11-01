@@ -1,0 +1,105 @@
+name: Upload HDF results to Heimdall
+description: >
+  Uploads HDF results to a Heimdall server through its API, with an API key:
+  each file becomes an evaluation, whose URL is printed and exported. Every
+  file is checked to be HDF first, and an upload is never retried. Needs the
+  install action first, and the server's API_KEY_SECRET set so it takes API
+  keys. The GitHub Actions twin of the orb's upload_heimdall command.
+author: juburr
+
+inputs:
+  url:
+    description: >
+      The Heimdall server's address, such as
+      https://heimdall.example.com: https, or http to this machine only.
+    required: true
+  api_key:
+    description: >
+      The environment variable holding a Heimdall API key, from a
+      secret, set in the env of the step that uses this action.
+      Evaluations are stored as its owner's (a user's or a group's).
+    default: HEIMDALL_API_KEY
+  input:
+    description: >
+      The HDF files to upload: paths or globs, separated by commas,
+      spaces or newlines. Empty: the files the last convert action wrote
+      (SAF_HDF_FILES).
+    default: ""
+  public:
+    description: >
+      Make the evaluations public: readable by every user of the server.
+    default: "false"
+  evaluation_tags:
+    description: >
+      Tags for the evaluations, separated by commas or newlines, such as
+      the branch or build.
+    default: ""
+  groups:
+    description: >
+      IDs of Heimdall groups to add the evaluations to, separated by
+      commas or spaces; the key's owner must be able to add to them. A
+      group's API key adds them to that group instead.
+    default: ""
+  timeout:
+    description: >
+      Seconds each request may take.
+    default: "600"
+  evaluation_urls_env_var:
+    description: >
+      The environment variable to export the evaluations' URLs in,
+      separated by spaces, for later steps.
+    default: HEIMDALL_EVALUATION_URLS
+  output_dir:
+    description: >
+      Absolute path of the directory for <report_name>.json, which lists
+      the evaluations.
+    default: "/tmp/saf-reports"
+  report_name:
+    description: >
+      The list's name.
+    default: heimdall
+  store_artifacts:
+    description: >
+      Upload output_dir as an artifact.
+    default: "true"
+
+runs:
+  using: composite
+  steps:
+    # Artifact names must be unique in a workflow run, and the same action
+    # can run in several jobs or matrix legs, so the name ends in a random
+    # suffix.
+    - name: Name the artifact
+      id: artifact
+      if: (inputs.store_artifacts == 'true' || inputs.store_artifacts == '1')
+      shell: bash
+      env:
+        REPORT_NAME: ${{ inputs.report_name }}
+      run: |
+        if [[ ! "${REPORT_NAME}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
+            REPORT_NAME=reports
+        fi
+        printf 'name=saf-reports-%s-%s\n' "${REPORT_NAME}" "$(od -An -tx1 -N4 /dev/urandom | tr -d ' \n')" >> "${GITHUB_OUTPUT}"
+    - name: Upload to Heimdall
+      shell: bash
+      env:
+        PARAM_API_KEY: ${{ inputs.api_key }}
+        PARAM_EVALUATION_TAGS: ${{ inputs.evaluation_tags }}
+        PARAM_EVALUATION_URLS_ENV_VAR: ${{ inputs.evaluation_urls_env_var }}
+        PARAM_GROUPS: ${{ inputs.groups }}
+        PARAM_INPUT: ${{ inputs.input }}
+        PARAM_OUTPUT_DIR: ${{ inputs.output_dir }}
+        PARAM_PUBLIC: ${{ inputs.public }}
+        PARAM_REPORT_NAME: ${{ inputs.report_name }}
+        PARAM_TIMEOUT: ${{ inputs.timeout }}
+        PARAM_URL: ${{ inputs.url }}
+      run: >-
+        bash "${GITHUB_ACTION_PATH}/../run_script.sh" "${GITHUB_ACTION_PATH}/../../src/scripts/upload_heimdall.sh"
+        "SCRIPT_SAF_LIB=${GITHUB_ACTION_PATH}/../../src/scripts/lib/saf.sh"
+    - name: Upload the artifact
+      if: always() && (inputs.store_artifacts == 'true' || inputs.store_artifacts == '1')
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        name: ${{ steps.artifact.outputs.name }}
+        path: ${{ inputs.output_dir }}
+        if-no-files-found: ignore

@@ -1,0 +1,96 @@
+description: >
+  Checks HDF results against compliance thresholds with the SAF CLI's
+  validate threshold: a minimum compliance, and how many controls may pass,
+  fail, go unreviewed or error, overall and by severity. Writes a JSON report
+  with each file's counts and verdict, and JUnit. A file that doesn't meet
+  the thresholds fails the step unless report_only is true. Needs the install
+  command first.
+parameters:
+  input:
+    type: string
+    default: ""
+    description: >
+      The HDF files to check, each on its own: paths or globs, separated by
+      commas, spaces or newlines. Empty: the files the last convert step
+      wrote (SAF_HDF_FILES). Environment variables are expanded.
+  template_file:
+    type: string
+    default: ""
+    description: >
+      A threshold template: YAML, as saf generate threshold writes it, with
+      keys nested or dotted (failed.critical.max: 0). Set this or
+      template_inline. A key the SAF CLI would skip, such as a misspelled
+      one, fails the step; no_impact.total.min and .max, and a compliance.max
+      of 0, which it skips though saf generate threshold writes them, are
+      checked by this step. Environment variables are expanded.
+  template_inline:
+    type: string
+    default: ""
+    description: >
+      Thresholds in the SAF CLI's inline form, such as
+      "{compliance.min: 80}, {failed.critical.max: 0}", in place of
+      template_file. Environment variables are expanded.
+  output_dir:
+    type: string
+    default: /tmp/saf-reports
+    description: >
+      Absolute path of the directory for the reports: <report_name>.json
+      (each file's counts and verdict), junit/<report_name>.xml and the run
+      record. Not expanded, since the store steps read it as given.
+  report_name:
+    type: string
+    default: threshold
+    description: >
+      The name every report of this check starts with, so several checks can
+      share output_dir.
+  junit:
+    type: boolean
+    default: true
+    description: >
+      Write junit/<report_name>.xml, a test per HDF file, and store it as
+      test results.
+  run_record:
+    type: boolean
+    default: false
+    description: >
+      Write <report_name>.run-record.json: what was checked, against which
+      thresholds, with which SAF CLI, and the verdicts, as described by
+      schemas/run-record.v1.json.
+  report_only:
+    type: boolean
+    default: false
+    description: >
+      Pass even when a file doesn't meet the thresholds, with a warning. A
+      file the SAF CLI can't check still fails the step.
+  store_artifacts:
+    type: boolean
+    default: true
+    description: >
+      Store output_dir as job artifacts, even when the check fails.
+steps:
+  - run:
+      name: SAF CLI threshold (<< parameters.report_name >>)
+      environment:
+        PARAM_INPUT: << parameters.input >>
+        PARAM_JUNIT: << parameters.junit >>
+        PARAM_OUTPUT_DIR: << parameters.output_dir >>
+        PARAM_REPORT_NAME: << parameters.report_name >>
+        PARAM_REPORT_ONLY: << parameters.report_only >>
+        PARAM_RUN_RECORD: << parameters.run_record >>
+        PARAM_TEMPLATE_FILE: << parameters.template_file >>
+        PARAM_TEMPLATE_INLINE: << parameters.template_inline >>
+        SCRIPT_SAF_LIB: << include(scripts/lib/saf.sh) >>
+      command: << include(scripts/threshold.sh) >>
+  - when:
+      condition: << parameters.junit >>
+      steps:
+        - store_test_results:
+            path: << parameters.output_dir >>/junit/<< parameters.report_name >>.xml
+            when: always
+  - when:
+      condition: << parameters.store_artifacts >>
+      steps:
+        - store_artifacts:
+            path: << parameters.output_dir >>
+            destination: saf-reports
+            when: always

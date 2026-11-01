@@ -1,0 +1,32 @@
+description: >
+  Upload a build's security results to a Heimdall server, tagged with the
+  branch and build, so they can be reviewed and compared there. The API key
+  comes from a context, never a parameter; the evaluations' links go to the
+  log and to HEIMDALL_EVALUATION_URLS.
+
+usage:
+  version: 2.1
+  orbs:
+    saf: juburr/saf-orb@0.1.0
+  jobs:
+    scan:
+      docker:
+        - image: cimg/base:current
+      steps:
+        - checkout
+        - run:
+            name: Scan with Semgrep
+            command: semgrep scan --sarif --output semgrep.sarif
+        - saf/install
+        - saf/convert:
+            from: sarif
+            input: semgrep.sarif
+            report_name: semgrep
+        - saf/upload_heimdall:
+            url: https://heimdall.example.com
+            evaluation_tags: ${CIRCLE_BRANCH},build ${CIRCLE_BUILD_NUM}
+  workflows:
+    scan:
+      jobs:
+        - scan:
+            context: heimdall

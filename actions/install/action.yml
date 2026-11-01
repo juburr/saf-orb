@@ -1,0 +1,92 @@
+name: Install the SAF CLI
+description: >
+  Installs the MITRE SAF CLI for Linux on amd64 or arm64, picked from the
+  machine's CPU architecture, after verifying its SHA-512 checksum. The SAF
+  CLI's Debian package brings its own Node.js, so the job needs no Node.js
+  of its own. Run this before the orb's other actions. The GitHub Actions
+  twin of the orb's install command.
+author: juburr
+
+inputs:
+  caching:
+    description: >
+      Cache the downloaded release between jobs, keyed by version, CPU
+      architecture and home directory. Only verified releases are
+      cached, and a cached release is verified again before it is
+      installed.
+    default: "true"
+  download_base_url:
+    description: >
+      An https:// mirror of GitHub Releases to download from in place of
+      https://github.com, such as an Artifactory or Nexus remote
+      repository: the release is fetched from
+      <download_base_url>/mitre/saf/releases/download/<version>/. The
+      checksum table, not the mirror, decides what is installed. It must
+      not hold credentials, a query or a fragment.
+    default: ""
+  install_path:
+    description: >
+      Absolute path of the directory to install the SAF CLI into, which
+      becomes the installation's root, with its bin directory added to
+      the PATH of later steps. It must be missing, empty, or an earlier
+      installation by this orb, and writable without root. Defaults to
+      $HOME/.saf-orb.
+    default: ""
+  verify_checksums:
+    description: >
+      SHA-512 verification against this orb's checksum table. "strict"
+      (default) fails before downloading anything when the version has
+      no checksum in the table. "known_versions" verifies listed
+      versions and installs unlisted versions unverified, with a
+      warning. "false" skips verification and is not recommended. One
+      of: false, known_versions, strict.
+    default: strict
+  version:
+    description: >
+      Version of the SAF CLI to install, such as 1.7.0. A leading "v" is
+      ignored, and environment variables are expanded.
+    default: "1.7.0"
+
+runs:
+  using: composite
+  steps:
+    # The key is computed from a file that names the CPU (uname -m), HOME (a
+    # cache is restored to the absolute path it was saved from) and the
+    # version, as the orb's command computes it.
+    - name: Prepare SAF CLI cache key
+      id: cache-key
+      if: (inputs.caching == 'true' || inputs.caching == '1')
+      shell: bash
+      env:
+        ORB_CACHE_KEY_FILE: ${{ runner.temp }}/saf-orb-cache-key
+        PARAM_VERSION: ${{ inputs.version }}
+      run: |
+        bash "${GITHUB_ACTION_PATH}/../../src/scripts/cache_key.sh"
+        # Bump the version in the key when an existing checksum table entry
+        # changes, so caches saved for the old bytes stop being restored.
+        printf 'key=saf-orb-v1-%s\n' "$(sha256sum < "${RUNNER_TEMP}/saf-orb-cache-key" | cut -c1-64)" >> "${GITHUB_OUTPUT}"
+    - name: Restore the SAF CLI cache
+      id: restore
+      if: (inputs.caching == 'true' || inputs.caching == '1')
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ~/.cache/saf-orb
+        key: ${{ steps.cache-key.outputs.key }}
+    - name: Install the SAF CLI
+      shell: bash
+      env:
+        PARAM_CACHING: ${{ inputs.caching }}
+        PARAM_DOWNLOAD_BASE_URL: ${{ inputs.download_base_url }}
+        PARAM_INSTALL_PATH: ${{ inputs.install_path }}
+        PARAM_VERIFY_CHECKSUMS: ${{ inputs.verify_checksums }}
+        PARAM_VERSION: ${{ inputs.version }}
+      run: bash "${GITHUB_ACTION_PATH}/../run_script.sh" "${GITHUB_ACTION_PATH}/../../src/scripts/install.sh"
+    # A saved cache can't be replaced, so it is only saved when none was
+    # restored. Like the orb's save_cache, it is saved right after the
+    # install, not at the end of the job.
+    - name: Save the SAF CLI cache
+      if: (inputs.caching == 'true' || inputs.caching == '1') && steps.restore.outputs.cache-hit != 'true'
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ~/.cache/saf-orb
+        key: ${{ steps.cache-key.outputs.key }}
