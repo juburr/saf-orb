@@ -378,6 +378,22 @@ run convert from=asff input=results.sarif "extra_args=--securityHub standards.js
 check "convert: asff's --securityHub file is made absolute" has 1 --securityHub "${JOB}/standards.json"
 run convert from=asff input=results.sarif "extra_args=--securityHub nowhere.json"
 check "convert: refuses a --securityHub file that isn't there" rc_is 2
+cp "${JOB}/standards.json" "${OUT}/asff.json"
+run convert from=asff input=results.sarif "extra_args=--securityHub ${OUT}/asff.json" -- STUB_CONVERT=dir
+check "convert: refuses a --securityHub file it would clear" rc_is 2
+check "convert: says why" said "which it reads"
+check "convert: keeps that file" cmp -s "${JOB}/standards.json" "${OUT}/asff.json"
+check "convert: refuses it before saf runs" not_run
+rm -f "${OUT}/asff.json"
+echo '{"stale": true}' > "${OUT}/zap.json"
+run convert from=zap input=results.sarif "extra_args=--bogus 1"
+check "convert: refuses an option it doesn't pass" rc_is 2
+check "convert: clears an earlier run's HDF even so" test ! -e "${OUT}/zap.json"
+echo '{"stale": true}' > "${OUT}/zap.json"
+run convert from=zap input=results.sarif "extra_args=--name 'unclosed"
+check "convert: refuses extra_args it can't split" rc_is 1
+check "convert: says so" said "extra_args could not be split into arguments"
+check "convert: clears an earlier run's HDF then too" test ! -e "${OUT}/zap.json"
 run convert from=sarif input=results.sarif "extra_args=-o /tmp/elsewhere.json"
 check "convert: refuses options it sets itself" rc_is 2
 run convert from=sarif input=results.sarif "extra_args=--name x"
@@ -589,6 +605,11 @@ cp "${JOB}/threshold.yml" "${HOME_DIR}/metadata.json"
 # shellcheck disable=SC2088 # the literal ~ is what the script expands
 run export input=hdf/good.json format=ckl report_name=meta 'extra_args=--metadata ~/metadata.json'
 check "export: a leading ~ in --metadata is HOME" has 1 --metadata "${HOME_DIR}/metadata.json"
+cp "${JOB}/threshold.yml" "${OUT}/meta.ckl"
+run export input=hdf/good.json format=ckl report_name=meta "extra_args=--metadata ${OUT}/meta.ckl"
+check "export: refuses an export that would replace the --metadata file" rc_is 2
+check "export: keeps the --metadata file" cmp -s "${JOB}/threshold.yml" "${OUT}/meta.ckl"
+rm -f "${OUT}/meta.ckl"
 run export "input=hdf/good.json hdf/bad.json" format=html "extra_args=--type Executive"
 check "export: html puts every file in one" test -f "${OUT}/good.html"
 check "export: html runs once, with every file" has 1 -i "${JOB}/hdf/good.json" "${JOB}/hdf/bad.json" -o

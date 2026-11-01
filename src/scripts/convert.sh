@@ -80,6 +80,62 @@ if [[ -n "${INPUT}" ]]; then
     INPUT=$(sf_abs "${INPUT}")
 fi
 
+# extra_args: only the converter's own options, since the command sets the
+# input, the output and -w itself. A path the SAF CLI reads is made absolute,
+# since it runs in a directory of its own. Read before the reports are
+# cleared, so a file an option names is never cleared; the first problem is
+# kept in EXTRA_ERROR, so the reports are cleared even so.
+# A value that can't be split is reported by sf_words after the clearing.
+EXTRA_VALUE=$(sf_subst "${PARAM_EXTRA_ARGS}")
+EXTRA_ARGS=()
+SPLIT_STATUS=0
+split_shell_words "${EXTRA_VALUE}" || SPLIT_STATUS=$?
+if [[ "${SPLIT_STATUS}" -eq 0 ]]; then
+    EXTRA_ARGS=(${SHELL_WORDS[@]+"${SHELL_WORDS[@]}"})
+fi
+ARGS=()
+AUX_INPUTS=()
+EXTRA_ERROR=()
+NAMED=false
+i=0
+while ((i < ${#EXTRA_ARGS[@]})); do
+    word=${EXTRA_ARGS[i]}
+    option=${word%%=*}
+    value=""
+    if [[ "${word}" == *=* ]]; then
+        value=${word#*=}
+    fi
+    case "${FROM}:${option}" in
+        zap:-n | zap:--name) kind=value NAMED=true ;;
+        nessus:-p | nessus:--parser) kind=value ;;
+        asff:-H | asff:--securityHub) kind=path ;;
+        *)
+            EXTRA_ERROR=("extra_args: ${word} is not an option convert passes to ${FROM}2hdf."
+                "It takes zap's --name, nessus's --parser and asff's --securityHub; input, output and include_raw are parameters.")
+            break
+            ;;
+    esac
+    if [[ "${word}" != *=* ]]; then
+        if ((i + 1 >= ${#EXTRA_ARGS[@]})); then
+            EXTRA_ERROR=("extra_args: ${option} needs a value.")
+            break
+        fi
+        i=$((i + 1))
+        value=${EXTRA_ARGS[i]}
+    fi
+    if [[ "${kind}" == path ]]; then
+        value=$(sf_path "${value}")
+        if [[ ! -f "${value}" || ! -r "${value}" ]]; then
+            EXTRA_ERROR=("extra_args: ${option} ${value} is not a readable file.")
+            break
+        fi
+        value=$(sf_abs "${value}")
+        AUX_INPUTS+=("${value}")
+    fi
+    ARGS+=("${option}" "${value}")
+    i=$((i + 1))
+done
+
 # --- Reports ---
 # Checked and cleared before the converter runs, so a failed run never
 # leaves an earlier run's HDF to be taken for its own; never the input,
@@ -97,17 +153,21 @@ if [[ -f "${MANIFEST}" ]]; then
     done < "${MANIFEST}"
 fi
 # shellcheck disable=SC2034 # read by sf_reports_apart
-SF_INPUTS=(${INPUT:+"${INPUT}"})
+SF_INPUTS=(${INPUT:+"${INPUT}"} ${AUX_INPUTS[@]+"${AUX_INPUTS[@]}"})
 sf_reports_apart "${OLD[@]}"
 rm -f "${OLD[@]}"
 if [[ -n "${INPUT_ERROR}" ]]; then
     usage "${INPUT_ERROR}"
 fi
+if [[ "${SPLIT_STATUS}" -ne 0 ]]; then
+    sf_words extra_args "${EXTRA_VALUE}"
+fi
+if [[ ${#EXTRA_ERROR[@]} -gt 0 ]]; then
+    usage "${EXTRA_ERROR[@]}"
+fi
 
 INCLUDE_RAW=$(sf_bool include_raw "${PARAM_INCLUDE_RAW}")
 HDF_ENV_VAR=$(sf_subst "${PARAM_HDF_ENV_VAR}")
-sf_words extra_args "$(sf_subst "${PARAM_EXTRA_ARGS}")"
-EXTRA_ARGS=(${SF_WORDS[@]+"${SF_WORDS[@]}"})
 
 # --- Parameters ---
 if [[ "${INCLUDE_RAW}" == true && "${RAW}" == false ]]; then
@@ -116,45 +176,10 @@ fi
 if [[ -n "${HDF_ENV_VAR}" ]] && ! sf_match "${HDF_ENV_VAR}" '^[A-Za-z_][A-Za-z0-9_]*$'; then
     usage "hdf_env_var must name an environment variable, not '${HDF_ENV_VAR}'."
 fi
-
-# extra_args: only the converter's own options, since the command sets the
-# input, the output and -w itself. A path the SAF CLI reads is made absolute,
-# since it runs in a directory of its own.
-ARGS=()
-NAMED=false
-i=0
-while ((i < ${#EXTRA_ARGS[@]})); do
-    word=${EXTRA_ARGS[i]}
-    option=${word%%=*}
-    value=""
-    if [[ "${word}" == *=* ]]; then
-        value=${word#*=}
-    fi
-    case "${FROM}:${option}" in
-        zap:-n | zap:--name) kind=value NAMED=true ;;
-        nessus:-p | nessus:--parser) kind=value ;;
-        asff:-H | asff:--securityHub) kind=path ;;
-        *)
-            usage "extra_args: ${word} is not an option convert passes to ${FROM}2hdf." \
-                "It takes zap's --name, nessus's --parser and asff's --securityHub; input, output and include_raw are parameters."
-            ;;
-    esac
-    if [[ "${word}" != *=* ]]; then
-        ((i + 1 < ${#EXTRA_ARGS[@]})) || usage "extra_args: ${option} needs a value."
-        i=$((i + 1))
-        value=${EXTRA_ARGS[i]}
-    fi
-    if [[ "${kind}" == path ]]; then
-        value=$(sf_path "${value}")
-        [[ -f "${value}" && -r "${value}" ]] || usage "extra_args: ${option} ${value} is not a readable file."
-        value=$(sf_abs "${value}")
-    fi
-    ARGS+=("${option}" "${value}")
-    i=$((i + 1))
-done
 if [[ "${FROM}" == zap && "${NAMED}" == false ]]; then
     usage "from: zap needs the scanned site's name: extra_args: --name https://example.com"
 fi
+
 if [[ "${INCLUDE_RAW}" == true ]]; then
     ARGS+=(-w)
 fi

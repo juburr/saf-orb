@@ -61,6 +61,7 @@ sf_inputs_check
 # and output are the command's. A file it reads is made absolute, since the
 # SAF CLI runs in a directory of its own.
 ARGS=()
+AUX_INPUTS=()
 i=0
 while ((i < ${#EXTRA_ARGS[@]})); do
     word=${EXTRA_ARGS[i]}
@@ -97,6 +98,7 @@ while ((i < ${#EXTRA_ARGS[@]})); do
         value=$(sf_path "${value}")
         [[ -f "${value}" && -r "${value}" ]] || usage "extra_args: ${option} ${value} is not a readable file."
         value=$(sf_abs "${value}")
+        AUX_INPUTS+=("${value}")
     fi
     ARGS+=("${option}" "${value}")
     i=$((i + 1))
@@ -134,6 +136,11 @@ for out in "${OUTPUTS[@]}"; do
     for path in "${SF_INPUTS[@]}"; do
         if [[ "${out}" -ef "${path}" ]]; then
             usage "The export ${out} would replace the HDF file it is made from."
+        fi
+    done
+    for path in ${AUX_INPUTS[@]+"${AUX_INPUTS[@]}"}; do
+        if [[ "${out}" -ef "${path}" ]]; then
+            usage "The export ${out} would replace ${path}, which extra_args names."
         fi
     done
 done
