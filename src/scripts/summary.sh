@@ -26,9 +26,12 @@ eval "${SCRIPT_SAF_LIB}"
 
 # --- Reports ---
 # Checked and cleared before anything else, so a run that stops never leaves
-# an earlier run's summary to be stored as its own.
+# an earlier run's summary to be stored as its own; never an HDF file it
+# reads, though.
 REPORT_NAME=${PARAM_REPORT_NAME}
 sf_output "${PARAM_OUTPUT_DIR}" "${REPORT_NAME}"
+sf_inputs input "${PARAM_INPUT}"
+sf_reports_apart "${SF_BASE}.json" "${SF_BASE}.yml" "${SF_BASE}.md"
 rm -f "${SF_BASE}.json" "${SF_BASE}.yml" "${SF_BASE}.md"
 
 STEP_SUMMARY=$(sf_bool step_summary "${PARAM_STEP_SUMMARY}")
@@ -43,7 +46,6 @@ for format in ${SF_LIST[@]+"${SF_LIST[@]}"}; do
             ;;
     esac
 done
-sf_inputs input "${PARAM_INPUT}"
 
 sf_require_jq
 SF_WORK=$(mktemp -d)

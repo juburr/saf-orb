@@ -35,16 +35,19 @@ STARTED=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
 # --- Reports ---
 # Checked and cleared before anything else, so a run that stops on a
-# parameter never leaves an earlier run's reports to be stored as its own.
-# Neither is expanded: the steps that store the reports read them as given.
+# parameter never leaves an earlier run's reports to be stored as its own;
+# never an HDF file it reads, though. Neither is expanded: the steps that
+# store the reports read them as given.
 REPORT_NAME=${PARAM_REPORT_NAME}
 sf_output "${PARAM_OUTPUT_DIR}" "${REPORT_NAME}"
 REPORT="${SF_BASE}.json"
 JUNIT_FILE="${SF_OUT}/junit/${REPORT_NAME}.xml"
 RECORD="${SF_BASE}.run-record.json"
+sf_inputs input "${PARAM_INPUT}"
+sf_reports_apart "${REPORT}" "${JUNIT_FILE}" "${RECORD}"
 rm -f "${REPORT}" "${JUNIT_FILE}" "${RECORD}"
 
-TEMPLATE_FILE=$(sf_subst "${PARAM_TEMPLATE_FILE}")
+TEMPLATE_FILE=$(sf_path "$(sf_subst "${PARAM_TEMPLATE_FILE}")")
 TEMPLATE_INLINE=$(sf_subst "${PARAM_TEMPLATE_INLINE}")
 JUNIT=$(sf_bool junit "${PARAM_JUNIT}")
 RUN_RECORD=$(sf_bool run_record "${PARAM_RUN_RECORD}")
@@ -247,8 +250,6 @@ THRESHOLDS=$({
     ($e.key | split(".")) as $path
     | if $e | has("id") then setpath($path; (getpath($path) // []) + [$e.id]) else setpath($path; $e.value) end)')
 
-INPUT_PARAM=${PARAM_INPUT}
-sf_inputs input "${INPUT_PARAM}"
 SF_WORK=$(mktemp -d)
 trap 'rm -rf "${SF_WORK}"' EXIT
 printf '%s\n' "${THRESHOLDS}" > "${SF_WORK}/threshold.json"

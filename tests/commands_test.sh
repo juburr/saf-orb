@@ -79,7 +79,8 @@ EOF
 #                 the directory -o, as prowler2hdf does), warn (oclif's
 #                 warning, exit 0, nothing written), none (nothing written),
 #                 bad (JSON that isn't HDF), exit (exit 2)
-#   STUB_EXPORT   for hdf2<format>: ok, warn, bad or none
+#   STUB_EXPORT   for hdf2<format>: ok, onecolumn (a CSV of one column), warn,
+#                 bad or none
 #   STUB_SUMMARY  for view summary: ok or fail (exit 1)
 # validate threshold answers by each HDF file's passthrough.stub: "fail"
 # fails a threshold (exit 1), "error" warns as the SAF CLI does when it
@@ -156,6 +157,7 @@ case "$1 $2" in
                     hdf2caat) printf 'PK\003\004xlsx' > "${out}" ;;
                 esac
                 ;;
+            onecolumn) printf 'ID\nC-1\n' > "${out}" ;;
             warn) echo " ›   Warning: something went wrong" >&2 ;;
             bad) echo "not it" > "${out}" ;;
             none) ;;
@@ -340,6 +342,17 @@ check "convert: exports nothing when it fails" test ! -s "${WORK}/bash_env"
 run convert from=sarif input=results.sarif -- STUB_CONVERT=bad
 check "convert: says a file isn't HDF" said "which is not HDF results"
 
+cp "${JOB}/results.sarif" "${HOME_DIR}/home.sarif"
+# shellcheck disable=SC2088 # the literal ~ is what the script expands
+run convert from=sarif 'input=~/home.sarif' report_name=home
+check "convert: a leading ~ in input is HOME" has 1 -i "${HOME_DIR}/home.sarif"
+cp "${JOB}/results.sarif" "${OUT}/mine.json"
+run convert from=sarif "input=${OUT}/mine.json" report_name=mine
+check "convert: refuses to clear a report path that is its input" rc_is 2
+check "convert: and leaves the input alone" test -f "${OUT}/mine.json"
+check "convert: refuses it before saf runs" not_run
+rm -f "${OUT}/mine.json"
+
 run convert from=trufflehog input=results.sarif
 check "convert: refuses trufflehog, whose HDF holds the secrets" rc_is 2
 check "convert: says to convert TruffleHog's SARIF" said "with from: sarif"
@@ -489,6 +502,20 @@ check "threshold: refuses both template_file and template_inline" rc_is 2
 run threshold input=hdf/good.json
 check "threshold: needs a template" rc_is 2
 
+cp "${JOB}/hdf/good.json" "${HOME_DIR}/home.json"
+cp "${JOB}/threshold.yml" "${HOME_DIR}/home.yml"
+# shellcheck disable=SC2088 # the literal ~ is what the script expands
+run threshold 'input=~/home.json' 'template_file=~/home.yml'
+check "threshold: a leading ~ in input and template_file is HOME" has 2 validate threshold -i "${HOME_DIR}/home.json"
+cp "${JOB}/hdf/good.json" "${OUT}/scan.json"
+run threshold "input=${OUT}/scan.json" report_name=scan "template_inline={failed.critical.max: 0}"
+check "threshold: refuses to clear a report that is an HDF file it reads" rc_is 2
+check "threshold: and leaves the HDF file alone" test -f "${OUT}/scan.json"
+run threshold report_name=scan "template_inline={failed.critical.max: 0}" -- "SAF_HDF_FILES=${OUT}/scan.json"
+check "threshold: also when the HDF file comes from SAF_HDF_FILES" rc_is 2
+check "threshold: leaving it alone" test -f "${OUT}/scan.json"
+rm -f "${OUT}/scan.json"
+
 run threshold "template_inline={failed.critical.max: 0}" -- "SAF_HDF_FILES=${JOB}/hdf/good.json"
 check "threshold: reads SAF_HDF_FILES when input is empty" has 2 -i "${JOB}/hdf/good.json"
 run threshold "template_inline={failed.critical.max: 0}"
@@ -519,6 +546,11 @@ check "summary: adds the table to GitHub's job summary" grep -q '### SAF CLI sum
 rm -f "${WORK}/step-summary.md"
 run summary input=hdf/good.json step_summary=false -- "GITHUB_STEP_SUMMARY=${WORK}/step-summary.md"
 check "summary: step_summary false leaves GitHub's job summary alone" test ! -e "${WORK}/step-summary.md"
+cp "${JOB}/hdf/good.json" "${OUT}/sum.json"
+run summary "input=${OUT}/sum.json" report_name=sum
+check "summary: refuses to clear a report that is an HDF file it reads" rc_is 2
+check "summary: and leaves the HDF file alone" test -f "${OUT}/sum.json"
+rm -f "${OUT}/sum.json"
 run summary input=hdf/good.json formats=pdf
 check "summary: refuses an unknown format" rc_is 2
 run summary input=hdf/good.json -- STUB_SUMMARY=fail
@@ -540,6 +572,13 @@ check "export: runs once per file" [ "$(calls)" -eq 2 ]
 run export "input=hdf/good.json hdf/bad.json" format=csv report_name=all "extra_args=-t --fields ID,Status"
 check "export: csv with report_name and several files" test -f "${OUT}/all-good.csv" -a -f "${OUT}/all-bad.csv"
 check "export: passes csv's options" has 1 -t --fields ID,Status
+run export input=hdf/good.json format=csv report_name=one "extra_args=--fields ID" -- STUB_EXPORT=onecolumn
+check "export: accepts a CSV of one column" rc_is 0
+check "export: writes it" test -f "${OUT}/one.csv"
+cp "${JOB}/threshold.yml" "${HOME_DIR}/metadata.json"
+# shellcheck disable=SC2088 # the literal ~ is what the script expands
+run export input=hdf/good.json format=ckl report_name=meta 'extra_args=--metadata ~/metadata.json'
+check "export: a leading ~ in --metadata is HOME" has 1 --metadata "${HOME_DIR}/metadata.json"
 run export "input=hdf/good.json hdf/bad.json" format=html "extra_args=--type Executive"
 check "export: html puts every file in one" test -f "${OUT}/good.html"
 check "export: html runs once, with every file" has 1 -i "${JOB}/hdf/good.json" "${JOB}/hdf/bad.json" -o
@@ -626,6 +665,11 @@ check "upload_heimdall: refuses http to another machine" rc_is 2
 run upload_heimdall "url=https://user:pw@heimdall.example.com" input=hdf/good.json -- "HEIMDALL_API_KEY=${KEY}"
 check "upload_heimdall: refuses credentials in url" rc_is 2
 check "upload_heimdall: never shows them" not_script_said "user:pw"
+cp "${JOB}/hdf/good.json" "${OUT}/heimdall.json"
+run upload_heimdall "url=${URL}" "input=${OUT}/heimdall.json" -- "HEIMDALL_API_KEY=${KEY}"
+check "upload_heimdall: refuses to clear its list when it is an HDF file it uploads" rc_is 2
+check "upload_heimdall: and leaves the HDF file alone" test -f "${OUT}/heimdall.json"
+rm -f "${OUT}/heimdall.json"
 run upload_heimdall "url=${URL}" input=hdf/good.json groups=admins -- "HEIMDALL_API_KEY=${KEY}"
 check "upload_heimdall: refuses a group that isn't an ID" rc_is 2
 run upload_heimdall "url=${URL}" input=hdf/good.json api_key=MY_KEY -- "MY_KEY=${KEY}"

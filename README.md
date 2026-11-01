@@ -217,7 +217,7 @@ with `HEIMDALL_API_KEY` in a context. The server's administrator turns API keys 
 | [`export`](#safexport) | Exports HDF results as a checklist, XCCDF, CSV, HTML or CAAT |
 | [`upload_heimdall`](#safupload_heimdall) | Uploads HDF results to a Heimdall server |
 
-Every parameter that names a value expands environment variables, except `output_dir` and `report_name`, which the steps that store the reports read too. Every command that reads HDF takes `input`: paths or globs, separated by commas, spaces or newlines; empty takes the files the last `convert` wrote, from `SAF_HDF_FILES`.
+Every parameter that names a value expands environment variables, except `output_dir` and `report_name`, which the steps that store the reports read too, and a leading `~` in a file's path is the home directory. A step never clears a report of an earlier run that is a file it reads: it fails instead, asking for another `report_name`. Every command that reads HDF takes `input`: paths or globs, separated by commas, spaces or newlines; empty takes the files the last `convert` wrote, from `SAF_HDF_FILES`.
 
 ### `saf/install`
 

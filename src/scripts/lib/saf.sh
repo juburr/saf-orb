@@ -402,8 +402,9 @@ sf_abs() {
 # sf_inputs PARAMETER VALUE: sets SF_INPUTS to the absolute paths of the HDF
 # files VALUE names: paths or globs, separated by commas, spaces or newlines,
 # with environment variables expanded. An empty VALUE takes the files the
-# last convert step exported in SAF_HDF_FILES, one per line. Each must be a
-# readable file; a glob that matches nothing stops the step.
+# last convert step exported in SAF_HDF_FILES, one per line. A leading ~ is
+# HOME. Each must be a readable file; a glob that matches nothing stops the
+# step.
 sf_inputs() {
     local item path matched seen=$'\n'
     SF_INPUTS=()
@@ -421,6 +422,7 @@ sf_inputs() {
     else
         sf_list "$1" "$2"
         for item in ${SF_LIST[@]+"${SF_LIST[@]}"}; do
+            item=$(sf_path "${item}")
             matched=false
             while IFS= read -r path; do
                 [[ -n "${path}" ]] || continue
@@ -494,4 +496,33 @@ sf_files_json() {
 sf_safe_name() {
     local LC_ALL=C
     printf '%s\n' "${1//[^A-Za-z0-9._-]/_}"
+}
+
+# sf_path VALUE: VALUE with a leading ~ (alone, or before a /) replaced by
+# HOME, as a shell would expand it: CircleCI's env subst expands variables,
+# not ~, and configs often write paths as ~/....
+sf_path() {
+    # shellcheck disable=SC2088 # the literal ~ is what is matched
+    case "$1" in
+        "~") printf '%s\n' "${HOME}" ;;
+        "~/"*) printf '%s/%s\n' "${HOME%/}" "${1:2}" ;;
+        *) printf '%s\n' "$1" ;;
+    esac
+}
+
+# sf_reports_apart PATH...: stops the step (exit 2) when a file this step
+# would clear and write is one of the HDF files it reads (SF_INPUTS), which
+# clearing it would delete.
+sf_reports_apart() {
+    local report input
+    for report in "$@"; do
+        [[ -e "${report}" ]] || continue
+        for input in ${SF_INPUTS[@]+"${SF_INPUTS[@]}"}; do
+            if [[ "${report}" -ef "${input}" ]]; then
+                echo "ERROR: ${report}, which this step writes, is ${input}, which it reads." >&2
+                echo "  Choose another report_name or output_dir." >&2
+                exit 2
+            fi
+        done
+    done
 }

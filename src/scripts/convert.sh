@@ -69,29 +69,7 @@ case "${FROM}" in
     *) usage "from must name one of the SAF CLI's file converters, such as anchoregrype or sarif, not '${FROM}'." ;;
 esac
 
-# --- Reports ---
-# Checked and cleared before anything runs, so a failed run never leaves an
-# earlier run's HDF to be taken for its own. Neither is expanded: the step
-# that stores the files reads them as given.
-REPORT_NAME=${PARAM_REPORT_NAME:-${FROM}}
-sf_output "${PARAM_OUTPUT_DIR}" "${REPORT_NAME}"
-MANIFEST="${SF_BASE}.files"
-if [[ -f "${MANIFEST}" ]]; then
-    while IFS= read -r old; do
-        case "${old}" in
-            "${SF_BASE}.json" | "${SF_BASE}"-*.json) rm -f "${old}" ;;
-        esac
-    done < "${MANIFEST}"
-fi
-rm -f "${SF_BASE}.json" "${MANIFEST}"
-
-INPUT=$(sf_subst "${PARAM_INPUT}")
-INCLUDE_RAW=$(sf_bool include_raw "${PARAM_INCLUDE_RAW}")
-HDF_ENV_VAR=$(sf_subst "${PARAM_HDF_ENV_VAR}")
-sf_words extra_args "$(sf_subst "${PARAM_EXTRA_ARGS}")"
-EXTRA_ARGS=(${SF_WORDS[@]+"${SF_WORDS[@]}"})
-
-# --- Parameters ---
+INPUT=$(sf_path "$(sf_subst "${PARAM_INPUT}")")
 if [[ -z "${INPUT}" ]]; then
     usage "input must name the file of ${FROM} results to convert."
 fi
@@ -99,6 +77,34 @@ if [[ ! -f "${INPUT}" || ! -r "${INPUT}" ]]; then
     usage "input ${INPUT} is not a readable file."
 fi
 INPUT=$(sf_abs "${INPUT}")
+
+# --- Reports ---
+# Checked and cleared before the converter runs, so a failed run never
+# leaves an earlier run's HDF to be taken for its own; never the input,
+# though. Neither is expanded: the step that stores the files reads them as
+# given.
+REPORT_NAME=${PARAM_REPORT_NAME:-${FROM}}
+sf_output "${PARAM_OUTPUT_DIR}" "${REPORT_NAME}"
+MANIFEST="${SF_BASE}.files"
+OLD=("${SF_BASE}.json" "${MANIFEST}")
+if [[ -f "${MANIFEST}" ]]; then
+    while IFS= read -r old; do
+        case "${old}" in
+            "${SF_BASE}"-*.json) OLD+=("${old}") ;;
+        esac
+    done < "${MANIFEST}"
+fi
+# shellcheck disable=SC2034 # read by sf_reports_apart
+SF_INPUTS=("${INPUT}")
+sf_reports_apart "${OLD[@]}"
+rm -f "${OLD[@]}"
+
+INCLUDE_RAW=$(sf_bool include_raw "${PARAM_INCLUDE_RAW}")
+HDF_ENV_VAR=$(sf_subst "${PARAM_HDF_ENV_VAR}")
+sf_words extra_args "$(sf_subst "${PARAM_EXTRA_ARGS}")"
+EXTRA_ARGS=(${SF_WORDS[@]+"${SF_WORDS[@]}"})
+
+# --- Parameters ---
 if [[ "${INCLUDE_RAW}" == true && "${RAW}" == false ]]; then
     usage "include_raw is not available for from: ${FROM}: its converter has no -w option."
 fi
@@ -134,6 +140,7 @@ while ((i < ${#EXTRA_ARGS[@]})); do
         value=${EXTRA_ARGS[i]}
     fi
     if [[ "${kind}" == path ]]; then
+        value=$(sf_path "${value}")
         [[ -f "${value}" && -r "${value}" ]] || usage "extra_args: ${option} ${value} is not a readable file."
         value=$(sf_abs "${value}")
     fi

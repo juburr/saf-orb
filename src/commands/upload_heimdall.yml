@@ -23,7 +23,8 @@ parameters:
     description: >
       The HDF files to upload: paths or globs, separated by commas, spaces or
       newlines. Empty: the files the last convert step wrote
-      (SAF_HDF_FILES). Environment variables are expanded.
+      (SAF_HDF_FILES). A leading ~ is the home directory, and environment
+      variables are expanded.
   public:
     type: boolean
     default: false

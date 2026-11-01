@@ -40,9 +40,13 @@ usage() {
     exit 2
 }
 
+# The list of evaluations is cleared before anything is sent, so a failed
+# run never leaves an earlier one's; never an HDF file it reads, though.
 REPORT_NAME=${PARAM_REPORT_NAME}
 sf_output "${PARAM_OUTPUT_DIR}" "${REPORT_NAME}"
 REPORT="${SF_BASE}.json"
+sf_inputs input "${PARAM_INPUT}"
+sf_reports_apart "${REPORT}"
 rm -f "${REPORT}"
 
 URL=$(sf_subst "${PARAM_URL}")
@@ -96,7 +100,6 @@ sf_uint timeout "${TIMEOUT}" 1
 if [[ -n "${URLS_ENV_VAR}" ]]; then
     sf_env_var_name evaluation_urls_env_var "${URLS_ENV_VAR}"
 fi
-sf_inputs input "${PARAM_INPUT}"
 for path in "${SF_INPUTS[@]}"; do
     if [[ "${path}" == *[\"\;]* ]]; then
         usage "${path} can't be uploaded: curl can't name a file with \" or ; in its path."

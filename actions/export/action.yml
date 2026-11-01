@@ -12,7 +12,8 @@ inputs:
     description: >
       The HDF files to export: paths or globs, separated by commas,
       spaces or newlines. Empty: the files the last convert action wrote
-      (SAF_HDF_FILES).
+      (SAF_HDF_FILES). A leading ~ is the home directory, and
+      environment variables are expanded.
     default: ""
   format:
     description: >

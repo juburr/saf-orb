@@ -26,7 +26,8 @@ inputs:
     required: true
   input:
     description: >
-      The tool's results file.
+      The tool's results file. A leading ~ is the home directory, and
+      environment variables are expanded.
     required: true
   include_raw:
     description: >

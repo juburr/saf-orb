@@ -12,7 +12,7 @@
 # The SAF CLI's converters exit 0 whatever goes wrong, printing a warning
 # instead, so the step fails unless it printed none and each file it wrote
 # looks like what it should be: a CHECKLIST or Benchmark XML document, a CSV
-# header, an HTML document, or an XLSX (zip) file.
+# header (of one column or more), an HTML document, or an XLSX (zip) file.
 #
 # Parameters (CircleCI passes them as PARAM_* variables):
 #   PARAM_INPUT, PARAM_FORMAT, PARAM_EXTRA_ARGS, PARAM_OUTPUT_DIR,
@@ -93,6 +93,7 @@ while ((i < ${#EXTRA_ARGS[@]})); do
         value=${EXTRA_ARGS[i]}
     fi
     if [[ "${kind}" == path ]]; then
+        value=$(sf_path "${value}")
         [[ -f "${value}" && -r "${value}" ]] || usage "extra_args: ${option} ${value} is not a readable file."
         value=$(sf_abs "${value}")
     fi
@@ -155,7 +156,7 @@ looks_right() {
     case "${FORMAT}" in
         ckl) [[ "${head}" == *"<CHECKLIST>"* && "${tail}" == *"</CHECKLIST>" ]] ;;
         xccdf) [[ "${head}" == *"<Benchmark"* && "${tail}" == *"</Benchmark>" ]] ;;
-        csv) [[ -s "$1" && "$(head -n 1 "$1")" == *,* ]] ;;
+        csv) [[ -s "$1" && -n "$(head -n 1 "$1" | tr -d '[:space:]')" ]] ;;
         html) [[ "${head}" == *"<html"* && "${tail}" == *"</html>" ]] ;;
         caat) [[ "$(head -c 4 "$1" | od -An -tx1 | tr -d ' \n')" == 504b0304 ]] ;;
     esac

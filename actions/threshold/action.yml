@@ -14,7 +14,8 @@ inputs:
     description: >
       The HDF files to check, each on its own: paths or globs, separated
       by commas, spaces or newlines. Empty: the files the last convert
-      action wrote (SAF_HDF_FILES).
+      action wrote (SAF_HDF_FILES). A leading ~ is the home directory,
+      and environment variables are expanded.
     default: ""
   template_file:
     description: >
@@ -23,7 +24,8 @@ inputs:
       template_inline. A key the SAF CLI would skip, such as a
       misspelled one, fails the step; no_impact.total.min and .max, and
       a compliance.max of 0, which it skips though saf generate
-      threshold writes them, are checked by this step.
+      threshold writes them, are checked by this step. A leading ~ is
+      the home directory, and environment variables are expanded.
     default: ""
   template_inline:
     description: >

@@ -77,7 +77,8 @@ To add a release: run `install_hash.sh -v <version>` once it is 7 days old, past
 ### Shared helpers (`scripts/lib/saf.sh`)
 
 - From trufflehog-orb's: `sf_subst`, `sf_bool`, `split_shell_words`/`sf_words`, `sf_match` (C locale), `sf_require_jq`, `sf_output`, `sf_uint`, `sf_junit`, `sf_gate`, `sf_plural`, `sf_tail`, `sf_export`, `sf_env_var_name`, `sf_json_is` (never `jq -e` on a tool's output: jq 1.6 exits 0 on an empty file), `sf_sha256`, `sf_url_public`, `sf_ci_json`, `sf_args_json`, `sf_list`.
-- The SAF CLI's own: `sf_tool` (`SF_SAF`, `SF_SAF_VERSION` from `@mitre/saf/<version> ...`, `SF_INSTALL_JSON` from `.saf-orb` beside it), `sf_saf`, `sf_saf_complained`, `sf_abs`, `sf_inputs`, `sf_hdf`/`sf_require_hdf`, `sf_top_profiles`, `sf_tool_json`, `sf_files_json`, `sf_safe_name`.
+- The SAF CLI's own: `sf_tool` (`SF_SAF`, `SF_SAF_VERSION` from `@mitre/saf/<version> ...`, `SF_INSTALL_JSON` from `.saf-orb` beside it), `sf_saf`, `sf_saf_complained`, `sf_abs`, `sf_path` (a leading `~` is HOME: CircleCI's env subst doesn't expand it, and configs write `~/...`), `sf_inputs`, `sf_reports_apart` (exit 2 when a report a step would clear is a file it reads), `sf_hdf`/`sf_require_hdf`, `sf_top_profiles`, `sf_tool_json`, `sf_files_json`, `sf_safe_name`.
+- Each script resolves its inputs before clearing an earlier run's reports, and `sf_reports_apart` keeps it from clearing one that is an input (such as `threshold` with `report_name: scan` after a `convert` that wrote `scan.json`).
 - Keep `schemas/run-record.v1.json` in step with threshold.sh's `write_record`; `tests/commands_test.sh` checks every run record it writes against it.
 
 ### GitHub Actions (`actions/`)

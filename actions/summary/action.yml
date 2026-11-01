@@ -14,7 +14,8 @@ inputs:
       The HDF files to summarize: paths or globs, separated by commas,
       spaces or newlines. Files whose first profile has the same name
       are added up. Empty: the files the last convert action wrote
-      (SAF_HDF_FILES).
+      (SAF_HDF_FILES). A leading ~ is the home directory, and
+      environment variables are expanded.
     default: ""
   formats:
     description: >
