@@ -326,8 +326,10 @@ jobs:
       - run:
           name: A Wrong API Key Fails The Step
           command: |
+            # A variable of its own: bash re-reads BASH_ENV when it starts,
+            # which would set HEIMDALL_API_KEY back to the real key.
             set +e
-            HEIMDALL_API_KEY=not-a-key bash tests/run_command.sh upload_heimdall url=http://localhost:3000 \
+            WRONG_KEY=not-a-key bash tests/run_command.sh upload_heimdall url=http://localhost:3000 api_key=WRONG_KEY \
               input="${HOME}/samples/red_hat_good.json" output_dir=/tmp/failing > /tmp/wrong-key.log 2>&1
             status=$?
             set -e
