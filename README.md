@@ -321,7 +321,7 @@ What one action exports, later steps see, as with CircleCI's `BASH_ENV`, so `SAF
 
 - **Verified installs.** The SAF CLI's package is checked against this orb's SHA-512 table before it is unpacked, and a cached copy is checked again. Each table entry was checked file by file against what MITRE signed (see [Checksum Verification](#-checksum-verification)).
 - **No update check.** The launcher sets `SAF_SKIP_NEW_VERSION_CHECK=true`, which stops the SAF CLI asking npm for a newer release once a day.
-- **The API key stays off command lines.** `upload_heimdall` reads it from the variable `api_key` names, with tracing off, writes the header to a file in its own `mktemp` directory, and passes curl that file. It sends the key only over `https://`, or `http://` to `localhost`, and only after Heimdall says it takes API keys.
+- **The API key stays off command lines.** `upload_heimdall` reads it from the variable `api_key` names, with tracing off, writes the header to a file in its own `mktemp` directory, and passes curl that file. It sends the key only over `https://`, or `http://` to `localhost` (never through a proxy), and only after Heimdall says it takes API keys.
 - **No secrets copied into HDF.** `convert` leaves out `trufflehog2hdf`, which would put each secret TruffleHog found into the HDF, and the converters that take credentials on their command line.
 - **Nothing written to your checkout.** The SAF CLI runs in the step's own directory, where its `saf-cli.log` stays.
 - **Nothing executed from parameters.** Templates are read, never run; `extra_args` is split like shell words, with nothing expanded or run, and only each converter's or format's own options are accepted.
@@ -337,7 +337,7 @@ What one action exports, later steps see, as with CircleCI's `BASH_ENV`, so `SAF
 `install.sh` holds the SHA-512 of the SAF CLI's Debian packages for Linux amd64 and arm64, for **1.7.0** and **1.5.3**. The packages carry no signature of their own, so each entry was added only after `src/scripts/install_hash.sh` checked the package against what is signed:
 
 1. **The npm package** `@mitre/saf` of that version: its registry signature and SLSA provenance (`npm audit signatures`), and that the provenance names `mitre/saf`'s release workflow, the release's tag (or a branch at the commit the tag points to), and a commit.
-2. **The package's files are the npm package's**, the lockfile is the one at that commit, and every file under `node_modules` is in the npm tarball of the version the lockfile pins, with the integrity hash it pins.
+2. **The package's files are the npm package's**, the lockfile is the one at that commit, and every file under `node_modules` is in the npm tarball of the version the lockfile pins, with the integrity hash it pins. Every package the lockfile installs is there, and nothing else is: no other files, and no links but npm's own.
 3. **Its `node` is the official Node.js build**, whose `SHASUMS256.txt` is signed by a Node.js release key.
 4. **The release was at least 7 days old**, so a compromise had time to come to light.
 

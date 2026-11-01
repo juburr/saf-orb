@@ -40,7 +40,7 @@ NODE_RELEASE_KEYRING="https://raw.githubusercontent.com/nodejs/release-keys/main
 # tarball, reads the npm metadata and the provenance, and finds which Node.js
 # release the package's node is. Run with python3 -I, from a file.
 read -r -d '' SAF_CHECK_PY << 'PYEOF' || true
-import base64, calendar, hashlib, io, json, os, posixpath, re, sys, tarfile, time, urllib.request
+import base64, calendar, hashlib, io, json, os, posixpath, re, stat, sys, tarfile, time, urllib.request
 
 def fail(message):
     print("ERROR: " + message)
@@ -87,14 +87,30 @@ def tar_files(data):
             files[rel] = tf.extractfile(member).read()
     return files
 
-def tree_files(root, skip_node_modules):
+def tree_files(root):
+    # The package's regular files, keyed by their path from root, but for the
+    # top node_modules, which package() checks on its own. Anything else
+    # fails: a node_modules below the top (Node loads a module from the
+    # nearest one on its path, so one in bin/ would shadow the checked
+    # tree), a symbolic link, or anything but a file or directory.
     out = {}
     for dirpath, dirnames, filenames in os.walk(root):
         rel_dir = os.path.relpath(dirpath, root)
-        if skip_node_modules:
+        for name in dirnames + filenames:
+            rel = os.path.normpath(os.path.join(rel_dir, name))
+            full = os.path.join(dirpath, name)
+            if os.path.islink(full):
+                fail("the package has a symbolic link %s outside node_modules." % rel)
+            if name == "node_modules" and rel_dir != "." and name in dirnames:
+                fail("the package has a node_modules below its top: %s." % rel)
+        if rel_dir == ".":
             dirnames[:] = [d for d in dirnames if d != "node_modules"]
         for name in filenames:
-            out[os.path.normpath(os.path.join(rel_dir, name))] = os.path.join(dirpath, name)
+            rel = os.path.normpath(os.path.join(rel_dir, name))
+            full = os.path.join(dirpath, name)
+            if not stat.S_ISREG(os.lstat(full).st_mode):
+                fail("the package holds %s, which is not a regular file." % rel)
+            out[rel] = full
     return out
 
 def npm_meta(packument_path, version, min_age_days):
@@ -186,7 +202,7 @@ def package(tree, tarball, lockfile, cache):
     # node is checked separately; bin/saf and bin/saf.cmd, oclif's own
     # launchers, are never run by saf-orb's launcher.
     published = tar_files(open(tarball, "rb").read())
-    files = tree_files(tree, skip_node_modules=True)
+    files = tree_files(tree)
     expected_extra = {"bin/node", "bin/saf", "bin/saf.cmd", "package-lock.json"}
     for rel, path in files.items():
         if rel in expected_extra:
@@ -219,6 +235,8 @@ def package(tree, tarball, lockfile, cache):
     # that contains it, which must be a production package in the lockfile.
     by_package = {}
     root_nm = os.path.join(tree, "node_modules")
+    if os.path.islink(root_nm) or not os.path.isdir(root_nm):
+        fail("the package's node_modules is not a directory.")
     for dirpath, dirnames, filenames in os.walk(root_nm):
         for name in dirnames + filenames:
             full = os.path.join(dirpath, name)
@@ -228,6 +246,8 @@ def package(tree, tarball, lockfile, cache):
             full = os.path.join(dirpath, name)
             if os.path.islink(full):
                 continue
+            if not stat.S_ISREG(os.lstat(full).st_mode):
+                fail("the package holds %s, which is not a regular file." % os.path.relpath(full, tree))
             rel = os.path.relpath(full, tree)
             if rel == "node_modules/.package-lock.json":
                 continue
@@ -249,6 +269,16 @@ def package(tree, tarball, lockfile, cache):
                     fail("%s is bundled by no package in the lockfile." % owner)
                 owner = parent
             by_package.setdefault(owner, {})[rel[len(owner) + 1:]] = full
+    # Every package a production install has must be there, with its files:
+    # all but development, optional and peer ones (which a production
+    # install may leave out) and bundled ones (in the bundling package's
+    # tarball).
+    for key, entry in lock.items():
+        if not key.startswith("node_modules/") or key in by_package:
+            continue
+        if any(entry.get(flag) for flag in ("dev", "devOptional", "optional", "peer", "link", "inBundle")):
+            continue
+        fail("the package lacks %s, which the lockfile installs." % key)
     checked = 0
     for key in sorted(by_package):
         entry = lock[key]
@@ -416,11 +446,18 @@ saf_node_verified() {
 # matches, and 1 otherwise: there is no unverified entry for a SAF CLI
 # release.
 verify_upstream() {
-    local tree="${PWD}/unpacked" node version tool
-    for tool in npm python3 gpgv jq xz git; do
+    local tree="${PWD}/unpacked" node version tool members
+    for tool in npm python3 gpgv jq xz git ar; do
         command -v "${tool}" > /dev/null || { echo "ERROR: ${tool} is required to verify the SAF CLI's package."; return 1; }
     done
     saf_npm_verified "$1" || return 1
+    # Exactly one data member, so dpkg-deb and the ar fallback in install.sh
+    # can't unpack different ones.
+    members=$(ar t "$3" 2> /dev/null | tr '\n' ' ') || members=""
+    if [[ ! "${members}" =~ ^debian-binary\ control\.tar(\.[a-z0-9]+)?\ data\.tar(\.[a-z0-9]+)?\ $ ]]; then
+        echo "ERROR: ${3##*/} has the members ${members:-none}, not debian-binary, control.tar and data.tar."
+        return 1
+    fi
     rm -rf "${tree}" && mkdir -p "${tree}"
     if ! (ORB_ASSET_NAME=${3##*/} saf_unpack "$3" "${tree}") > unpack.log 2>&1; then
         cat unpack.log

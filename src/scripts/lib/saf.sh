@@ -403,15 +403,18 @@ sf_abs() {
 # files VALUE names: paths or globs, separated by commas, spaces or newlines,
 # with environment variables expanded. An empty VALUE takes the files the
 # last convert step exported in SAF_HDF_FILES, one per line. A leading ~ is
-# HOME. Each must be a readable file; a glob that matches nothing stops the
-# step.
+# HOME. Each must be a readable file, and a glob must match something; the
+# first problem goes in SF_INPUTS_ERROR rather than stopping the step, so a
+# script can clear an earlier run's reports (but none of the files found)
+# before sf_inputs_check stops it.
 sf_inputs() {
     local item path matched seen=$'\n'
     SF_INPUTS=()
+    SF_INPUTS_ERROR=""
     if [[ -z "$2" ]]; then
         if [[ -z "${SAF_HDF_FILES:-}" ]]; then
-            echo "ERROR: ${1} is empty, and no convert step exported SAF_HDF_FILES. Name the HDF files in ${1}." >&2
-            exit 1
+            SF_INPUTS_ERROR="${1} is empty, and no convert step exported SAF_HDF_FILES. Name the HDF files in ${1}."
+            return 0
         fi
         while IFS= read -r path; do
             if [[ -n "${path}" && "${seen}" != *$'\n'"${path}"$'\n'* ]]; then
@@ -433,22 +436,27 @@ sf_inputs() {
                     seen+="${path}"$'\n'
                 fi
             done < <(compgen -G "${item}" || true)
-            if [[ "${matched}" == false ]]; then
-                echo "ERROR: ${1}: ${item} matches no file." >&2
-                exit 1
+            if [[ "${matched}" == false && -z "${SF_INPUTS_ERROR}" ]]; then
+                SF_INPUTS_ERROR="${1}: ${item} matches no file."
             fi
         done
     fi
-    if [[ ${#SF_INPUTS[@]} -eq 0 ]]; then
-        echo "ERROR: ${1} names no file." >&2
-        exit 1
+    if [[ ${#SF_INPUTS[@]} -eq 0 && -z "${SF_INPUTS_ERROR}" ]]; then
+        SF_INPUTS_ERROR="${1} names no file."
     fi
-    for path in "${SF_INPUTS[@]}"; do
-        if [[ ! -f "${path}" || ! -r "${path}" ]]; then
-            echo "ERROR: ${path} is not a readable file." >&2
-            exit 1
+    for path in ${SF_INPUTS[@]+"${SF_INPUTS[@]}"}; do
+        if [[ (! -f "${path}" || ! -r "${path}") && -z "${SF_INPUTS_ERROR}" ]]; then
+            SF_INPUTS_ERROR="${path} is not a readable file."
         fi
     done
+}
+
+# sf_inputs_check: stops the step on the problem sf_inputs found, if any.
+sf_inputs_check() {
+    if [[ -n "${SF_INPUTS_ERROR:-}" ]]; then
+        echo "ERROR: ${SF_INPUTS_ERROR}" >&2
+        exit 1
+    fi
 }
 
 # sf_hdf FILE: whether FILE holds HDF results: a JSON object whose profiles

@@ -103,25 +103,28 @@ saf_tree() {
 }
 
 # saf_unpack PACKAGE DIR: unpacks the Debian package's files into DIR, without
-# installing it: with dpkg-deb, or, where there is none, with ar, tar and the
-# decompressor of the package's data member (data.tar.zst, .xz or .gz).
+# installing it: with dpkg-deb, or, where there is none or it can't read the
+# package (dpkg before 1.21.18 can't read zstd), with ar, tar and the
+# decompressor of the package's data member (data.tar.zst, .xz or .gz). Like
+# dpkg-deb, it takes the first member whose name starts with data.tar.
 saf_unpack() {
     local member
-    if command -v dpkg-deb > /dev/null 2>&1; then
-        dpkg-deb -x "$1" "$2"
-        return
+    if command -v dpkg-deb > /dev/null 2>&1 && dpkg-deb -x "$1" "$2"; then
+        return 0
     fi
     if ! command -v ar > /dev/null 2>&1; then
         orb_die "Unpacking the SAF CLI's Debian package needs dpkg-deb, or ar (from binutils) with tar. Use an image" \
             "that has them, such as cimg/base."
     fi
-    member=$(ar t "$1" | awk '/^data\.tar(\.(zst|xz|gz))?$/ { print; exit }')
+    find "$2" -mindepth 1 -delete
+    member=$(ar t "$1" | awk '/^data\.tar/ { print; exit }')
     case "${member}" in
         data.tar.zst) orb_require_tools zstd tar ;;
         data.tar.xz) orb_require_tools xz tar ;;
         data.tar.gz) orb_require_tools gzip tar ;;
         data.tar) orb_require_tools tar ;;
-        *) orb_die "${ORB_ASSET_NAME} has no data.tar member, so it is not a Debian package." ;;
+        "") orb_die "${ORB_ASSET_NAME} has no data.tar member, so it is not a Debian package." ;;
+        *) orb_die "${ORB_ASSET_NAME}'s ${member} is compressed in a way this install can't unpack without dpkg-deb." ;;
     esac
     case "${member}" in
         data.tar.zst) ar p "$1" "${member}" | zstd -dc | tar -xf - -o -C "$2" ;;

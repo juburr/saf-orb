@@ -215,6 +215,14 @@ fixture_checks() {
     new_case
     run_install "PATH=${no_dpkg}"
     check "without dpkg-deb, unpacks the package with ar and tar" installed
+    # A dpkg-deb that can't read the package, as dpkg before 1.21.18 can't
+    # read zstd.
+    mkdir -p "${WORK}/old-dpkg"
+    printf '#!/bin/sh\necho "dpkg-deb: error: unknown compression" >&2\nexit 2\n' > "${WORK}/old-dpkg/dpkg-deb"
+    chmod +x "${WORK}/old-dpkg/dpkg-deb"
+    new_case
+    run_install "PATH=${WORK}/old-dpkg:${no_dpkg}"
+    check "when dpkg-deb can't read the package, unpacks it with ar and tar" installed
     no_ar=$(path_without ar)
     rm -f "${no_ar}/dpkg-deb"
     new_case

@@ -361,8 +361,10 @@ run convert from=sonarqube input=results.sarif
 check "convert: refuses a converter that reads a service" rc_is 2
 run convert from=bogus input=results.sarif
 check "convert: refuses an unknown converter" rc_is 2
+echo '{"stale": true}' > "${OUT}/sarif.json"
 run convert from=sarif input=missing.sarif
 check "convert: refuses a missing input" rc_is 2
+check "convert: clears an earlier run's HDF even so" test ! -e "${OUT}/sarif.json"
 check "convert: refuses a missing input before saf runs" not_run
 run convert from=veracode input=results.sarif include_raw=true
 check "convert: refuses include_raw where the converter has no -w" rc_is 2
@@ -460,6 +462,9 @@ check "threshold: says the summary failed" said "saf view summary could not summ
 run threshold input=hdf/not-hdf.json "template_inline={failed.critical.max: 0}"
 check "threshold: refuses a file that isn't HDF" rc_is 1
 check "threshold: refuses it before validate threshold runs" not_run
+check "threshold: puts why in the report" json_is "${OUT}/threshold.json" '.error | test("is not HDF")' true
+check "threshold: fails a JUnit test, rather than passing one" \
+    grep -q '<testcase classname="threshold" name="threshold check"><failure message="No verdict: ' "${OUT}/junit/threshold.xml"
 
 # template TEXT: runs threshold with TEXT as the template file.
 template() {
@@ -524,8 +529,13 @@ check "threshold: says so" said "no convert step exported SAF_HDF_FILES"
 run threshold "input=hdf/*.json" "template_inline={failed.critical.max: 0}"
 check "threshold: expands globs" rc_is 1
 check "threshold: refuses the non-HDF file a glob matched" said "not-hdf.json is not HDF"
+echo '{"stale": true}' > "${OUT}/threshold.json"
+mkdir -p "${OUT}/junit"
+echo '<testsuites/>' > "${OUT}/junit/threshold.xml"
 run threshold "input=hdf/missing-*.json" "template_inline={failed.critical.max: 0}"
 check "threshold: fails on a glob that matches nothing" rc_is 1
+check "threshold: says so" said "ERROR: input: hdf/missing-*.json matches no file."
+check "threshold: clears an earlier run's reports even so" test ! -e "${OUT}/threshold.json" -a ! -e "${OUT}/junit/threshold.xml"
 jq '.profiles += [{name: "second", controls: []}]' "${JOB}/hdf/good.json" > "${JOB}/two-profiles.json"
 run threshold input=two-profiles.json "template_inline={failed.critical.max: 0}"
 check "threshold: warns that only the first profile is checked" said "checks only ${JOB}/two-profiles.json's first profile, good, not second"
@@ -630,6 +640,10 @@ check "upload_heimdall: lists the evaluations" json_is "${OUT}/heimdall.json" '[
 check "upload_heimdall: exports their URLs" [ "$(env_value HEIMDALL_EVALUATION_URLS)" == "${URL}/results/1001 ${URL}/results/1002" ]
 check "upload_heimdall: never shows the key" not_said "${KEY}"
 
+settings '{}'
+run upload_heimdall "url=${URL}" input=hdf/good.json -- "HEIMDALL_API_KEY=${KEY}" http_proxy=http://127.0.0.1:9 \
+    HTTP_PROXY=http://127.0.0.1:9 all_proxy=http://127.0.0.1:9 ALL_PROXY=http://127.0.0.1:9 no_proxy= NO_PROXY=
+check "upload_heimdall: sends plain http to this machine past any proxy" rc_is 0
 settings '{}'
 run upload_heimdall "url=${URL}" input=hdf/good.json public=true -- "HEIMDALL_API_KEY=${KEY}"
 check "upload_heimdall: public sends true" json_is "${SERVER}/uploads.jsonl" '.fields.public' '["true"]'

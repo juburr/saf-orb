@@ -48,6 +48,7 @@ REPORT="${SF_BASE}.json"
 sf_inputs input "${PARAM_INPUT}"
 sf_reports_apart "${REPORT}"
 rm -f "${REPORT}"
+sf_inputs_check
 
 URL=$(sf_subst "${PARAM_URL}")
 URL=${URL%/}
@@ -117,6 +118,11 @@ fi
 SF_WORK=$(mktemp -d)
 trap 'rm -rf "${SF_WORK}"' EXIT
 CURL=(curl -sS --proto "${PROTO}" --max-time "${TIMEOUT}")
+# Plain http goes only to this machine, never through a proxy (http_proxy
+# applies to localhost too), which would carry the key over a network.
+if [[ "${PROTO}" == "=http" ]]; then
+    CURL+=(--noproxy '*')
+fi
 if curl --help all 2> /dev/null | grep -q -- '--fail-with-body'; then
     CURL+=(--fail-with-body)
 else

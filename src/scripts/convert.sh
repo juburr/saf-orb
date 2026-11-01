@@ -70,13 +70,15 @@ case "${FROM}" in
 esac
 
 INPUT=$(sf_path "$(sf_subst "${PARAM_INPUT}")")
+INPUT_ERROR=""
 if [[ -z "${INPUT}" ]]; then
-    usage "input must name the file of ${FROM} results to convert."
+    INPUT_ERROR="input must name the file of ${FROM} results to convert."
+elif [[ ! -f "${INPUT}" || ! -r "${INPUT}" ]]; then
+    INPUT_ERROR="input ${INPUT} is not a readable file."
 fi
-if [[ ! -f "${INPUT}" || ! -r "${INPUT}" ]]; then
-    usage "input ${INPUT} is not a readable file."
+if [[ -n "${INPUT}" ]]; then
+    INPUT=$(sf_abs "${INPUT}")
 fi
-INPUT=$(sf_abs "${INPUT}")
 
 # --- Reports ---
 # Checked and cleared before the converter runs, so a failed run never
@@ -95,9 +97,12 @@ if [[ -f "${MANIFEST}" ]]; then
     done < "${MANIFEST}"
 fi
 # shellcheck disable=SC2034 # read by sf_reports_apart
-SF_INPUTS=("${INPUT}")
+SF_INPUTS=(${INPUT:+"${INPUT}"})
 sf_reports_apart "${OLD[@]}"
 rm -f "${OLD[@]}"
+if [[ -n "${INPUT_ERROR}" ]]; then
+    usage "${INPUT_ERROR}"
+fi
 
 INCLUDE_RAW=$(sf_bool include_raw "${PARAM_INCLUDE_RAW}")
 HDF_ENV_VAR=$(sf_subst "${PARAM_HDF_ENV_VAR}")

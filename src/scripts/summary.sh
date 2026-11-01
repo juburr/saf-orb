@@ -33,6 +33,7 @@ sf_output "${PARAM_OUTPUT_DIR}" "${REPORT_NAME}"
 sf_inputs input "${PARAM_INPUT}"
 sf_reports_apart "${SF_BASE}.json" "${SF_BASE}.yml" "${SF_BASE}.md"
 rm -f "${SF_BASE}.json" "${SF_BASE}.yml" "${SF_BASE}.md"
+sf_inputs_check
 
 STEP_SUMMARY=$(sf_bool step_summary "${PARAM_STEP_SUMMARY}")
 sf_list formats "${PARAM_FORMATS}"

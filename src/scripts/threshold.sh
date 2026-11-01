@@ -46,6 +46,7 @@ RECORD="${SF_BASE}.run-record.json"
 sf_inputs input "${PARAM_INPUT}"
 sf_reports_apart "${REPORT}" "${JUNIT_FILE}" "${RECORD}"
 rm -f "${REPORT}" "${JUNIT_FILE}" "${RECORD}"
+sf_inputs_check
 
 TEMPLATE_FILE=$(sf_path "$(sf_subst "${PARAM_TEMPLATE_FILE}")")
 TEMPLATE_INLINE=$(sf_subst "${PARAM_TEMPLATE_INLINE}")
@@ -256,13 +257,16 @@ printf '%s\n' "${THRESHOLDS}" > "${SF_WORK}/threshold.json"
 
 # --- Reports ---
 RESULTS="[]"
+# Why there is no verdict, when stop ends the step.
+STOP_MESSAGE=""
 
 # write_reports OUTCOME EXIT_CODE: writes the JSON report, the JUnit and the
 # run record from RESULTS.
 write_reports() {
     local reports=() cases
-    jq -n --argjson thresholds "${THRESHOLDS}" --argjson results "${RESULTS}" '{
+    jq -n --argjson thresholds "${THRESHOLDS}" --argjson results "${RESULTS}" --arg error "${STOP_MESSAGE}" '{
         thresholds: $thresholds,
+        error: (if $error == "" then null else $error end),
         files: ($results | length),
         passed: ([$results[] | select(.outcome == "passed")] | length),
         failed: ([$results[] | select(.outcome == "failed")] | length),
@@ -279,6 +283,12 @@ write_reports() {
             detail: ("compliance: \(.compliance // "unknown")%\n"
                 + ((.counts // {}) | to_entries | map("\(.key): \(.value.total // 0)") | join("\n")))
         }]' <<< "${RESULTS}")
+        # A step that stopped before checking a file fails a test of its own,
+        # rather than leaving the one passing test sf_junit writes for none.
+        if [[ -n "${STOP_MESSAGE}" && "${cases}" == "[]" ]]; then
+            cases=$(jq -cn --arg suite "${REPORT_NAME}" --arg message "${STOP_MESSAGE}" \
+                '[{classname: $suite, name: "threshold check", status: "failed", message: "No verdict: \($message)"}]')
+        fi
         sf_junit "${JUNIT_FILE}" "${REPORT_NAME}" "${cases}"
         reports+=("${JUNIT_FILE}")
     fi
@@ -316,6 +326,7 @@ stop() {
     if [[ $# -gt 1 ]]; then
         printf '  %s\n' "${@:2}" >&2
     fi
+    STOP_MESSAGE="$*"
     write_reports error 1 || true
     exit 1
 }

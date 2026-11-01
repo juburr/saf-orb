@@ -55,6 +55,7 @@ fi
 sf_words extra_args "$(sf_subst "${PARAM_EXTRA_ARGS}")"
 EXTRA_ARGS=(${SF_WORDS[@]+"${SF_WORDS[@]}"})
 sf_inputs input "${PARAM_INPUT}"
+sf_inputs_check
 
 # extra_args: the format's own options, which hdf2<format> takes; the input
 # and output are the command's. A file it reads is made absolute, since the
