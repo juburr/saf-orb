@@ -56,14 +56,15 @@ tool_archive_member() {
 
 # tool_version LAUNCHER: prints the installed version without using the
 # network: SAF_SKIP_NEW_VERSION_CHECK stops the SAF CLI's daily check for a
-# newer release (the launcher sets it too), and its caches go to a directory
-# that is removed afterwards.
+# newer release (the launcher sets it too). It runs in a directory that is
+# removed afterwards, with its caches there too, since the SAF CLI writes
+# saf-cli.log in its working directory, which is the job's checkout.
 tool_version() {
-    local cache rc=0
-    cache=$(mktemp -d)
-    SAF_SKIP_NEW_VERSION_CHECK=true XDG_CACHE_HOME="${cache}" XDG_CONFIG_HOME="${cache}" XDG_DATA_HOME="${cache}" \
-        "$1" --version || rc=$?
-    rm -rf "${cache}"
+    local dir rc=0
+    dir=$(mktemp -d)
+    (cd "${dir}" && SAF_SKIP_NEW_VERSION_CHECK=true XDG_CACHE_HOME="${dir}" XDG_CONFIG_HOME="${dir}" \
+        XDG_DATA_HOME="${dir}" "$1" --version) || rc=$?
+    rm -rf "${dir}"
     return "${rc}"
 }
 

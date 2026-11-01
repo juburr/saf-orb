@@ -54,10 +54,12 @@ set -uo pipefail
 # package is unpacked with ar where there is no dpkg-deb.
 
 # fixture_binary ARCH: a stand-in node that says which SAF CLI it is, and
-# whether the launcher stopped the update check.
+# whether the launcher stopped the update check. Like the SAF CLI, it writes
+# saf-cli.log in its working directory, which the install's smoke test must
+# keep out of the job's.
 fixture_binary() {
     # shellcheck disable=SC2016 # expanded by the stand-in
-    printf '#!/bin/sh\necho "fake saf for %s skip=${SAF_SKIP_NEW_VERSION_CHECK:-} args=$*"\n' "$1"
+    printf '#!/bin/sh\necho started >> saf-cli.log\necho "fake saf for %s skip=${SAF_SKIP_NEW_VERSION_CHECK:-} args=$*"\n' "$1"
 }
 
 # fixture_make_asset VERSION ARCH DEST CONTENT: a Debian package holding
@@ -145,13 +147,14 @@ fixture_checks() {
     run_install
     check "installs the package's tree under lib/saf" test -f "${CASE}/bin/lib/saf/package.json" -a -f "${CASE}/bin/lib/saf/bin/run"
     check "with only the launcher in bin" test "$(ls "${CASE}/bin/bin")" = saf
-    OUTPUT=$("${CASE}/bin/bin/saf" --version 2>&1)
+    mkdir "${CASE}/run"
+    OUTPUT=$(cd "${CASE}/run" && "${CASE}/bin/bin/saf" --version 2>&1)
     check "the launcher runs the package's node on bin/run" said "args=${CASE}/bin/lib/saf/bin/run --version"
     check "with SAF_SKIP_NEW_VERSION_CHECK=true" said "skip=true"
-    OUTPUT=$(SAF_SKIP_NEW_VERSION_CHECK=false "${CASE}/bin/bin/saf" 2>&1)
+    OUTPUT=$(cd "${CASE}/run" && SAF_SKIP_NEW_VERSION_CHECK=false "${CASE}/bin/bin/saf" 2>&1)
     check "unless it is set" said "skip=false"
     ln -s "${CASE}/bin/bin/saf" "${CASE}/saf-link"
-    OUTPUT=$("${CASE}/saf-link" 2>&1)
+    OUTPUT=$(cd "${CASE}/run" && "${CASE}/saf-link" 2>&1)
     check "the launcher works through a symbolic link" said "fake saf for"
     check "records what it installed" \
         test "$(jq -c '[.tool, .version, .arch, .asset, .verify_checksums]' "${CASE}/bin/.saf-orb")" \
