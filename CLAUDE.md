@@ -61,7 +61,7 @@ To add a release: run `install_hash.sh -v <version>` once it is 7 days old, past
 
 ### What the SAF CLI does that the scripts work around
 
-- **It exits 0 when it fails.** Its commands' `catch` turns an exception into an oclif warning (lines marked ` ›`, `sf_saf_complained`) and exits 0. So every script checks the SAF CLI's stderr and what it wrote. `view summary` exits 1 on a load error; `validate threshold` exits 1 for an unmet threshold.
+- **It exits 0 when it fails.** Its commands' `catch` turns an exception into an oclif warning (lines marked ` ›`, `sf_saf_complained`) and exits 0. Some converters only print `Error:` lines and exit 0 without writing anything (`zap2hdf` given a SARIF file: `Error: Unable to process input file`). So every script checks the SAF CLI's stderr and what it wrote. `view summary` exits 1 on a load error; `validate threshold` exits 1 for an unmet threshold.
 - **It writes `saf-cli.log` in its working directory.** `sf_saf` runs it in `SF_WORK/run`, with `SAF_SKIP_NEW_VERSION_CHECK=true`; every path it gets is absolute (`sf_abs`). `tests/wiring_test.sh` fails on a call that bypasses `sf_saf`.
 - **`validate threshold`** checks only the first profile (`contains[0]`), stops at the first unmet threshold, skips keys it doesn't know, skips `no_impact.total.min`/`.max` (which `saf generate threshold` writes) and a `compliance.max` of 0 (truthiness), fails an empty `controls` list whatever the results, and its flattened-template conversion (`unflattenThreshold`) keeps only the last of `<status>.<x>.min`/`.max`.
 - **`trufflehog2hdf`** copies `Raw` and `RawV2` (each secret, in full) into the HDF, so `convert` refuses it.

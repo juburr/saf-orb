@@ -278,7 +278,10 @@ jobs:
             set -e
             cat /tmp/convert.log
             [[ "${status}" -eq 1 ]]
-            grep -q "could not convert" /tmp/convert.log
+            # zap2hdf exits 0 and writes nothing; the step must say so and
+            # show why the SAF CLI gave up.
+            grep -q "ERROR: saf convert zap2hdf wrote no HDF file" /tmp/convert.log
+            grep -q "Unable to process input file" /tmp/convert.log
             [[ ! -e /tmp/failing/zap.json ]]
       - run:
           name: Check The Run Records Against The Schema
