@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="assets/logos/saf-orb-512px.png" width="256" alt="SAF Orb logo">
+
 # MITRE SAF CLI for CircleCI and GitHub Actions
 
 ### Turn your security tools' results into compliance gates, checklists and Heimdall evaluations, with a checksum-verified SAF CLI.
@@ -383,6 +385,10 @@ circleci orb pack src/ > orb.yml && circleci orb validate orb.yml
 ```
 
 Pull requests run the offline tests, then every command with the real SAF CLI on its own sample data on CircleCI (`.circleci/test-deploy.yml`) and every action on GitHub's runners (`.github/workflows/actions.yml`), including uploads to a Heimdall server in Docker.
+
+## 🎨 Logo
+
+The logo is in [`assets/logos`](assets/logos), from 64 to 1024 pixels.
 
 ## 📜 License
 
