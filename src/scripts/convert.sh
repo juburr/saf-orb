@@ -153,7 +153,9 @@ if [[ -f "${MANIFEST}" ]]; then
     done < "${MANIFEST}"
 fi
 # shellcheck disable=SC2034 # read by sf_reports_apart
-SF_INPUTS=(${INPUT:+"${INPUT}"} ${AUX_INPUTS[@]+"${AUX_INPUTS[@]}"})
+SF_INPUTS=(${INPUT:+"${INPUT}"})
+# shellcheck disable=SC2034 # read by sf_reports_apart
+SF_OTHER_INPUTS=(${AUX_INPUTS[@]+"${AUX_INPUTS[@]}"})
 sf_reports_apart "${OLD[@]}"
 rm -f "${OLD[@]}"
 if [[ -n "${INPUT_ERROR}" ]]; then

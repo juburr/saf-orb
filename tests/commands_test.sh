@@ -536,6 +536,13 @@ run threshold report_name=scan "template_inline={failed.critical.max: 0}" -- "SA
 check "threshold: also when the HDF file comes from SAF_HDF_FILES" rc_is 2
 check "threshold: leaving it alone" test -f "${OUT}/scan.json"
 rm -f "${OUT}/scan.json"
+cp "${JOB}/threshold.yml" "${OUT}/threshold.json"
+run threshold input=hdf/good.json "template_file=${OUT}/threshold.json"
+check "threshold: refuses to clear a report that is its template" rc_is 2
+check "threshold: says why" said "is ${OUT}/threshold.json, which it reads"
+check "threshold: and leaves the template alone" cmp -s "${JOB}/threshold.yml" "${OUT}/threshold.json"
+check "threshold: refuses it before validate threshold runs" not_run
+rm -f "${OUT}/threshold.json"
 
 run threshold "template_inline={failed.critical.max: 0}" -- "SAF_HDF_FILES=${JOB}/hdf/good.json"
 check "threshold: reads SAF_HDF_FILES when input is empty" has 2 -i "${JOB}/hdf/good.json"

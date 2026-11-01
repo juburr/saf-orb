@@ -519,13 +519,14 @@ sf_path() {
 }
 
 # sf_reports_apart PATH...: stops the step (exit 2) when a file this step
-# would clear and write is one of the HDF files it reads (SF_INPUTS), which
-# clearing it would delete.
+# would clear and write is one of the files it reads, which clearing it
+# would delete: the HDF files (SF_INPUTS) and any other (SF_OTHER_INPUTS,
+# such as a threshold template).
 sf_reports_apart() {
     local report input
     for report in "$@"; do
         [[ -e "${report}" ]] || continue
-        for input in ${SF_INPUTS[@]+"${SF_INPUTS[@]}"}; do
+        for input in ${SF_INPUTS[@]+"${SF_INPUTS[@]}"} ${SF_OTHER_INPUTS[@]+"${SF_OTHER_INPUTS[@]}"}; do
             if [[ "${report}" -ef "${input}" ]]; then
                 echo "ERROR: ${report}, which this step writes, is ${input}, which it reads." >&2
                 echo "  Choose another report_name or output_dir." >&2
