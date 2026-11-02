@@ -1,0 +1,134 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/juburr/saf-orb/blob/main/schemas/run-record.v1.json",
+  "title": "saf-orb run record, version 1",
+  "description": "What one saf-orb threshold check ran, on which HDF files, against which thresholds, with which SAF CLI, and its verdicts: written as <report_name>.run-record.json when the threshold command's run_record parameter is true. Fields are only ever added within version 1; a change that would break a reader gets a new schema URL.",
+  "type": "object",
+  "required": [
+    "schema", "command", "outcome", "exit_code", "started_at", "finished_at", "ci", "working_directory",
+    "tool", "inputs", "thresholds", "gate", "results", "reports"
+  ],
+  "properties": {
+    "schema": {
+      "const": "https://github.com/juburr/saf-orb/blob/main/schemas/run-record.v1.json"
+    },
+    "command": {
+      "description": "The orb command that wrote the record.",
+      "enum": ["threshold"]
+    },
+    "outcome": {
+      "description": "passed: every file met the thresholds. failed: a file didn't, which failed the step. failed-reported: a file didn't, passed because report_only is true. error: the SAF CLI could not check a file, so there is no verdict, and the step failed.",
+      "enum": ["passed", "failed", "failed-reported", "error"]
+    },
+    "exit_code": {
+      "description": "1 when the outcome is error, else 0. The step's own exit code also depends on report_only.",
+      "type": "integer"
+    },
+    "started_at": { "$ref": "#/$defs/timestamp" },
+    "finished_at": { "$ref": "#/$defs/timestamp" },
+    "ci": {
+      "description": "The CI job the command ran in: a CircleCI job (from CIRCLE_BUILD_URL, CIRCLE_SHA1, CIRCLE_JOB and the project), or a GitHub Actions run (from GITHUB_SERVER_URL, GITHUB_REPOSITORY, GITHUB_RUN_ID, GITHUB_RUN_ATTEMPT, GITHUB_SHA and GITHUB_JOB); null elsewhere.",
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "required": ["provider", "build_url", "sha1", "job", "repository"],
+          "properties": {
+            "provider": { "enum": ["circleci", "github-actions"] },
+            "build_url": { "type": "string" },
+            "sha1": { "type": "string" },
+            "job": { "type": "string" },
+            "repository": { "type": "string" }
+          }
+        }
+      ]
+    },
+    "working_directory": {
+      "description": "The absolute directory the command ran in.",
+      "type": "string"
+    },
+    "tool": {
+      "description": "The SAF CLI that ran; null when it was not found.",
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "required": ["name", "path", "version", "install"],
+          "properties": {
+            "name": { "const": "saf" },
+            "path": { "type": "string" },
+            "version": { "description": "What saf --version reports.", "type": "string" },
+            "install": {
+              "description": "The install record this orb's install command wrote beside it: the release, the package it came from with its SHA-512, and how it was checked; null for a SAF CLI installed otherwise.",
+              "oneOf": [
+                { "type": "null" },
+                {
+                  "type": "object",
+                  "required": ["tool", "version", "arch", "asset", "sha512", "verify_checksums"],
+                  "properties": {
+                    "tool": { "const": "saf" },
+                    "version": { "type": "string" },
+                    "arch": { "enum": ["amd64", "arm64"] },
+                    "asset": { "type": "string" },
+                    "sha512": { "$ref": "#/$defs/sha512" },
+                    "verify_checksums": { "enum": ["strict", "known_versions", "false"] }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "inputs": {
+      "description": "The HDF files checked, with their SHA-256.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/file" }
+    },
+    "thresholds": {
+      "description": "The thresholds, as the nested template handed to the SAF CLI: compliance.min and .max, <status>.total, <status>.total.min and .max, and <status>.<severity>.min, .max and .controls.",
+      "type": "object"
+    },
+    "gate": {
+      "description": "The settings the step's exit code follows.",
+      "type": "object",
+      "required": ["report_only"],
+      "properties": {
+        "report_only": { "type": "boolean" }
+      }
+    },
+    "results": {
+      "description": "Each file's verdict, in the order checked.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["file", "profile", "outcome", "message", "compliance"],
+        "properties": {
+          "file": { "type": "string" },
+          "profile": { "description": "The file's first profile, the one the SAF CLI checks.", "type": ["string", "null"] },
+          "outcome": { "enum": ["passed", "failed", "error"] },
+          "message": { "description": "The first threshold not met, as the SAF CLI says it, or why there is no verdict.", "type": "string" },
+          "compliance": { "description": "The compliance the SAF CLI computed, in percent; null when it couldn't.", "type": ["number", "null"] }
+        }
+      }
+    },
+    "reports": {
+      "description": "The report files written before the record, with their SHA-256.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/file" }
+    }
+  },
+  "$defs": {
+    "timestamp": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$" },
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "sha512": { "type": "string", "pattern": "^[0-9a-f]{128}$" },
+    "file": {
+      "type": "object",
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": { "type": "string" },
+        "sha256": { "$ref": "#/$defs/sha256" }
+      }
+    }
+  }
+}

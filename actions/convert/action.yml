@@ -1,0 +1,105 @@
+name: Convert results to HDF with the SAF CLI
+description: >
+  Converts a security tool's results to HDF (the Heimdall Data Format) with
+  the SAF CLI's <from>2hdf converter, checks that it wrote HDF, and exports
+  the files' paths for the orb's other actions. The SAF CLI's converters
+  exit 0 even when they fail, so this step checks what they wrote. Needs the
+  install action first. The GitHub Actions twin of the orb's convert
+  command.
+author: juburr
+
+inputs:
+  from:
+    description: >
+      The tool the results come from, as the SAF CLI names its converter
+      (from: anchoregrype runs saf convert anchoregrype2hdf):
+      anchoregrype (Grype JSON), sarif (any SARIF, such as Semgrep's,
+      CodeQL's or TruffleHog's), xccdf_results (OpenSCAP results), ckl
+      (a STIG Viewer checklist), cyclonedx_sbom, gosec, checkov, zap and
+      the others listed. trivy reads Trivy's ASFF output; for its SARIF,
+      use sarif. TruffleHog's own JSON is left out, since the SAF CLI's
+      converter copies every secret into the HDF. One of: anchoregrype,
+      asff, burpsuite, checkov, ckl, conveyor, cyclonedx_sbom,
+      dbprotect, dependency_track, fortify, gosec, jfrog_xray, nessus,
+      netsparker, neuvector, nikto, prisma, prowler, sarif, scoutsuite,
+      snyk, trivy, twistlock, veracode, xccdf_results, zap.
+    required: true
+  input:
+    description: >
+      The tool's results file. A leading ~ is the home directory, and
+      environment variables are expanded.
+    required: true
+  include_raw:
+    description: >
+      Add the tool's results to the HDF (-w), for the converters that
+      take it. They can hold more than the HDF does, such as file
+      contents.
+    default: "false"
+  extra_args:
+    description: >
+      The converter's own options, split like shell words: zap needs the
+      scanned site's name (--name https://example.com); nessus takes
+      --parser; asff takes --securityHub with a file of AWS security
+      standards.
+    default: ""
+  output_dir:
+    description: >
+      Absolute path of the directory for the HDF: <report_name>.json, or
+      <report_name>-<name>.json for each when the converter writes
+      several (nessus and snyk per host or project; asff, conveyor,
+      prisma, prowler and trivy always may), and <report_name>.files,
+      which lists them.
+    default: "/tmp/saf-reports"
+  report_name:
+    description: >
+      What the HDF files' names start with, so several conversions can
+      share output_dir. Defaults to from.
+    default: ""
+  hdf_env_var:
+    description: >
+      The environment variable to export the HDF files' paths in, one
+      per line, for later steps. The orb's other actions read
+      SAF_HDF_FILES when their input is empty.
+    default: SAF_HDF_FILES
+  store_artifacts:
+    description: >
+      Upload output_dir as an artifact.
+    default: "true"
+
+runs:
+  using: composite
+  steps:
+    # Artifact names must be unique in a workflow run, and the same action
+    # can run in several jobs or matrix legs, so the name ends in a random
+    # suffix.
+    - name: Name the artifact
+      id: artifact
+      if: (inputs.store_artifacts == 'true' || inputs.store_artifacts == '1')
+      shell: bash
+      env:
+        REPORT_NAME: ${{ inputs.report_name }}
+      run: |
+        if [[ ! "${REPORT_NAME}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
+            REPORT_NAME=reports
+        fi
+        printf 'name=saf-reports-%s-%s\n' "${REPORT_NAME}" "$(od -An -tx1 -N4 /dev/urandom | tr -d ' \n')" >> "${GITHUB_OUTPUT}"
+    - name: SAF CLI convert
+      shell: bash
+      env:
+        PARAM_EXTRA_ARGS: ${{ inputs.extra_args }}
+        PARAM_FROM: ${{ inputs.from }}
+        PARAM_HDF_ENV_VAR: ${{ inputs.hdf_env_var }}
+        PARAM_INCLUDE_RAW: ${{ inputs.include_raw }}
+        PARAM_INPUT: ${{ inputs.input }}
+        PARAM_OUTPUT_DIR: ${{ inputs.output_dir }}
+        PARAM_REPORT_NAME: ${{ inputs.report_name }}
+      run: >-
+        bash "${GITHUB_ACTION_PATH}/../run_script.sh" "${GITHUB_ACTION_PATH}/../../src/scripts/convert.sh"
+        "SCRIPT_SAF_LIB=${GITHUB_ACTION_PATH}/../../src/scripts/lib/saf.sh"
+    - name: Upload the artifact
+      if: always() && (inputs.store_artifacts == 'true' || inputs.store_artifacts == '1')
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        name: ${{ steps.artifact.outputs.name }}
+        path: ${{ inputs.output_dir }}
+        if-no-files-found: ignore

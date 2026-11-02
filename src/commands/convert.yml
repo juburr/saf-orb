@@ -1,0 +1,111 @@
+description: >
+  Converts a security tool's results to HDF (the Heimdall Data Format) with
+  the SAF CLI's <from>2hdf converter, checks that it wrote HDF, and exports
+  the files' paths for the orb's other commands. The SAF CLI's converters
+  exit 0 even when they fail, so this step checks what they wrote. Needs the
+  install command first.
+parameters:
+  from:
+    type: enum
+    enum:
+      - anchoregrype
+      - asff
+      - burpsuite
+      - checkov
+      - ckl
+      - conveyor
+      - cyclonedx_sbom
+      - dbprotect
+      - dependency_track
+      - fortify
+      - gosec
+      - jfrog_xray
+      - nessus
+      - netsparker
+      - neuvector
+      - nikto
+      - prisma
+      - prowler
+      - sarif
+      - scoutsuite
+      - snyk
+      - trivy
+      - twistlock
+      - veracode
+      - xccdf_results
+      - zap
+    description: >
+      The tool the results come from, as the SAF CLI names its converter
+      (from: anchoregrype runs saf convert anchoregrype2hdf): anchoregrype
+      (Grype JSON), sarif (any SARIF, such as Semgrep's, CodeQL's or
+      TruffleHog's), xccdf_results (OpenSCAP results), ckl (a STIG Viewer
+      checklist), cyclonedx_sbom, gosec, checkov, zap and the others listed.
+      trivy reads Trivy's ASFF output; for its SARIF, use sarif. TruffleHog's
+      own JSON is left out, since the SAF CLI's converter copies every secret
+      into the HDF.
+  input:
+    type: string
+    description: >
+      The tool's results file. A leading ~ is the home directory, and
+      environment variables are expanded.
+  include_raw:
+    type: boolean
+    default: false
+    description: >
+      Add the tool's results to the HDF (-w), for the converters that take
+      it. They can hold more than the HDF does, such as file contents.
+  extra_args:
+    type: string
+    default: ""
+    description: >
+      The converter's own options, split like shell words: zap needs the
+      scanned site's name (--name https://example.com); nessus takes
+      --parser; asff takes --securityHub with a file of AWS security
+      standards. Environment variables are expanded.
+  output_dir:
+    type: string
+    default: /tmp/saf-reports
+    description: >
+      Absolute path of the directory for the HDF: <report_name>.json, or
+      <report_name>-<name>.json for each when the converter writes several
+      (nessus and snyk per host or project; asff, conveyor, prisma, prowler
+      and trivy always may), and <report_name>.files, which lists them. Not
+      expanded, since the store step reads it as given.
+  report_name:
+    type: string
+    default: ""
+    description: >
+      What the HDF files' names start with, so several conversions can share
+      output_dir. Defaults to from.
+  hdf_env_var:
+    type: env_var_name
+    default: SAF_HDF_FILES
+    description: >
+      The environment variable to export the HDF files' paths in, one per
+      line, for later steps. The orb's other commands read SAF_HDF_FILES when
+      their input is empty.
+  store_artifacts:
+    type: boolean
+    default: true
+    description: >
+      Store output_dir as job artifacts.
+steps:
+  - run:
+      name: SAF CLI convert (<< parameters.from >>)
+      environment:
+        PARAM_EXTRA_ARGS: << parameters.extra_args >>
+        PARAM_FROM: << parameters.from >>
+        PARAM_HDF_ENV_VAR: << parameters.hdf_env_var >>
+        PARAM_INCLUDE_RAW: << parameters.include_raw >>
+        PARAM_INPUT: << parameters.input >>
+        PARAM_OUTPUT_DIR: << parameters.output_dir >>
+        PARAM_REPORT_NAME: << parameters.report_name >>
+        SCRIPT_SAF_LIB: << include(scripts/lib/saf.sh) >>
+      command: << include(scripts/convert.sh) >>
+  - when:
+      condition: << parameters.store_artifacts >>
+      steps:
+        - store_artifacts:
+            path: << parameters.output_dir >>
+            destination: saf-reports
+            when: always

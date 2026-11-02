@@ -1,0 +1,12 @@
+version: 2.1
+
+description: >
+  Install a checksum-verified MITRE SAF CLI and use it in a pipeline: convert
+  security tools' results to the Heimdall Data Format (HDF), gate on
+  compliance thresholds, summarize, export checklists and reports, and upload
+  results to a Heimdall server. Every command has a GitHub Action of the same
+  name. Not affiliated with MITRE.
+
+display:
+  home_url: "https://github.com/juburr/saf-orb"
+  source_url: "https://github.com/juburr/saf-orb"

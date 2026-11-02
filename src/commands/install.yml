@@ -1,0 +1,83 @@
+description: >
+  Installs the MITRE SAF CLI for Linux on amd64 or arm64, picked from the
+  machine's CPU architecture, after verifying its SHA-512 checksum. The SAF
+  CLI's Debian package brings its own Node.js, so the job needs no Node.js of
+  its own. Run this before the orb's other commands.
+parameters:
+  caching:
+    type: boolean
+    default: true
+    description: >
+      Cache the downloaded release between jobs, keyed by version, CPU
+      architecture and home directory. Only verified releases are cached, and
+      a cached release is verified again before it is installed.
+  download_base_url:
+    type: string
+    default: ""
+    description: >
+      An https:// mirror of GitHub Releases to download from in place of
+      https://github.com, such as an Artifactory or Nexus remote repository:
+      the release is fetched from
+      <download_base_url>/mitre/saf/releases/download/<version>/. The checksum
+      table, not the mirror, decides what is installed. It must not hold
+      credentials, a query or a fragment. Environment variables are expanded.
+  install_path:
+    type: string
+    default: ""
+    description: >
+      Absolute path of the directory to install the SAF CLI into, which
+      becomes the installation's root, with its bin directory added to the
+      PATH of later steps. It must be missing, empty, or an earlier
+      installation by this orb, and writable without root. Environment
+      variables are expanded. Defaults to $HOME/.saf-orb.
+  verify_checksums:
+    type: enum
+    enum: ["false", "known_versions", "strict"]
+    default: strict
+    description: >
+      SHA-512 verification against this orb's checksum table. "strict"
+      (default) fails before downloading anything when the version has no
+      checksum in the table. "known_versions" verifies listed versions and
+      installs unlisted versions unverified, with a warning. "false" skips
+      verification and is not recommended.
+  version:
+    type: string
+    default: "1.7.0"
+    description: >
+      Version of the SAF CLI to install, such as 1.7.0. A leading "v" is
+      ignored, and environment variables are expanded.
+steps:
+  - when:
+      condition: << parameters.caching >>
+      steps:
+        # The key is computed from a file that names the CPU (uname -m, as
+        # {{ arch }} also encodes the CPU model and would split the cache by
+        # host), HOME (a cache is restored to the absolute path it was saved
+        # from), and the version with environment variables expanded.
+        - run:
+            name: Prepare SAF CLI cache key
+            environment:
+              ORB_CACHE_KEY_FILE: /tmp/saf-orb-cache-key
+              PARAM_VERSION: << parameters.version >>
+            command: << include(scripts/cache_key.sh) >>
+        # A saved cache can't be replaced. Bump v1 when an existing checksum
+        # table entry changes, so caches saved for the old bytes stop being
+        # restored.
+        - restore_cache:
+            key: saf-orb-v1-<< parameters.version >>-{{ checksum "/tmp/saf-orb-cache-key" }}
+  - run:
+      name: Install SAF CLI << parameters.version >>
+      environment:
+        PARAM_CACHING: << parameters.caching >>
+        PARAM_DOWNLOAD_BASE_URL: << parameters.download_base_url >>
+        PARAM_INSTALL_PATH: << parameters.install_path >>
+        PARAM_VERIFY_CHECKSUMS: << parameters.verify_checksums >>
+        PARAM_VERSION: << parameters.version >>
+      command: << include(scripts/install.sh) >>
+  - when:
+      condition: << parameters.caching >>
+      steps:
+        - save_cache:
+            key: saf-orb-v1-<< parameters.version >>-{{ checksum "/tmp/saf-orb-cache-key" }}
+            paths:
+              - ~/.cache/saf-orb

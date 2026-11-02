@@ -1,0 +1,62 @@
+description: >
+  Summarizes HDF results with the SAF CLI's view summary: per profile, its
+  compliance and how many controls passed, failed, were not reviewed, were
+  not applicable or had an error, by severity. The table goes to the log
+  (and on GitHub Actions to the job's summary page), and to output_dir in the
+  formats asked for. Needs the install command first.
+parameters:
+  input:
+    type: string
+    default: ""
+    description: >
+      The HDF files to summarize: paths or globs, separated by commas, spaces
+      or newlines. Files whose first profile has the same name are added up.
+      Empty: the files the last convert step wrote (SAF_HDF_FILES). A leading
+      ~ is the home directory, and environment variables are expanded.
+  formats:
+    type: string
+    default: "json markdown"
+    description: >
+      The formats to write to output_dir, separated by commas or spaces:
+      json (<report_name>.json), yaml (.yml) and markdown (.md). Empty writes
+      none: the summary goes to the log only.
+  step_summary:
+    type: boolean
+    default: true
+    description: >
+      On GitHub Actions, add the table to the job's summary page. Has no
+      effect on CircleCI.
+  output_dir:
+    type: string
+    default: /tmp/saf-reports
+    description: >
+      Absolute path of the directory for the summary. Not expanded, since the
+      store step reads it as given.
+  report_name:
+    type: string
+    default: summary
+    description: >
+      The name the summary's files start with.
+  store_artifacts:
+    type: boolean
+    default: true
+    description: >
+      Store output_dir as job artifacts.
+steps:
+  - run:
+      name: SAF CLI summary
+      environment:
+        PARAM_FORMATS: << parameters.formats >>
+        PARAM_INPUT: << parameters.input >>
+        PARAM_OUTPUT_DIR: << parameters.output_dir >>
+        PARAM_REPORT_NAME: << parameters.report_name >>
+        PARAM_STEP_SUMMARY: << parameters.step_summary >>
+        SCRIPT_SAF_LIB: << include(scripts/lib/saf.sh) >>
+      command: << include(scripts/summary.sh) >>
+  - when:
+      condition: << parameters.store_artifacts >>
+      steps:
+        - store_artifacts:
+            path: << parameters.output_dir >>
+            destination: saf-reports
+            when: always

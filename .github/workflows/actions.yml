@@ -1,0 +1,304 @@
+# Tests the GitHub Actions in actions/ on GitHub's own runners, as
+# .circleci/test-deploy.yml tests the orb's commands on CircleCI. Each job
+# runs the actions from this checkout (uses: ./actions/...), so a pull
+# request tests its own changes.
+name: GitHub Actions
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  offline-tests:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install jsonschema
+        run: python3 -m pip install --quiet --user jsonschema==4.26.0
+      - name: Run the offline tests
+        run: |
+          for test in tests/*_test.sh; do
+            echo "=== ${test}"
+            bash "${test}"
+          done
+
+  install:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            arch: amd64
+          - runner: ubuntu-24.04-arm
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./actions/install
+      - name: Verify the install is the package the checksum table pins
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          version=$(grep -A3 '^  version:' src/commands/install.yml | sed -n 's/^    default: "\(.*\)"$/\1/p')
+          [[ "$(command -v saf)" == "${HOME}/.saf-orb/bin/saf" ]]
+          saf --version | grep -q "^@mitre/saf/${version} "
+          expected=$(grep -F "[\"${version}/${ARCH}\"]" src/scripts/install.sh | cut -d'"' -f4)
+          [[ "$(jq -r .sha512 ~/.saf-orb/.saf-orb)" == "${expected}" ]]
+      # A second install takes the verified release from the cache.
+      - uses: ./actions/install
+      - id: unlisted
+        uses: ./actions/install
+        continue-on-error: true
+        with:
+          version: 1.6.0
+          install_path: ~/unlisted
+      - name: Verify an unlisted version fails closed
+        env:
+          UNLISTED: ${{ steps.unlisted.outcome }}
+        run: |
+          [[ "${UNLISTED}" == "failure" ]]
+          [[ ! -e ~/unlisted/bin/saf ]]
+
+  install-from-cache:
+    needs: install
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Block the download hosts
+        run: |
+          echo "127.0.0.1 github.com objects.githubusercontent.com release-assets.githubusercontent.com" \
+            | sudo tee -a /etc/hosts
+          if curl -sSf --max-time 10 -o /dev/null https://github.com; then
+            echo "github.com is still reachable."
+            exit 1
+          fi
+      - uses: ./actions/install
+      - name: Verify the install
+        run: saf --version
+
+  # install_hash.sh must print the table's entries for the default, after
+  # checking each package file by file against the npm package (registry
+  # signature and SLSA provenance), the lockfile at the provenance's commit,
+  # every dependency's npm tarball and the signed Node.js release.
+  install-hash:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Generate the default version's entries and compare them with the table
+        run: |
+          version=$(grep -A3 '^  version:' src/commands/install.yml | sed -n 's/^    default: "\(.*\)"$/\1/p')
+          bash src/scripts/install_hash.sh -v "${version}" | tee "${RUNNER_TEMP}/entries"
+          [[ "$(wc -l < "${RUNNER_TEMP}/entries")" -eq 2 ]]
+          while IFS= read -r entry; do
+            grep -qxF -- "${entry}" src/scripts/install.sh
+          done < "${RUNNER_TEMP}/entries"
+
+  # test-deploy.yml's pipeline-test: every action on the SAF CLI's own sample
+  # data, on both architectures, checked by tests/check_pipeline.sh, with the
+  # steps that must fail run under continue-on-error and their outcomes
+  # checked.
+  pipeline:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./actions/install
+      - name: Fetch the SAF CLI's sample data
+        run: bash tests/fetch_samples.sh "${RUNNER_TEMP}/samples"
+      - uses: ./actions/convert
+        with:
+          from: sarif
+          input: ${{ runner.temp }}/samples/sarif_input.sarif
+      - uses: ./actions/convert
+        with:
+          from: anchoregrype
+          input: ${{ runner.temp }}/samples/anchore_grype.json
+          report_name: grype
+      - uses: ./actions/convert
+        with:
+          from: xccdf_results
+          input: ${{ runner.temp }}/samples/xccdf-results-openscap-rhel8.xml
+          report_name: openscap
+      - uses: ./actions/convert
+        with:
+          from: zap
+          input: ${{ runner.temp }}/samples/webgoat.json
+          extra_args: --name http://mymac.com:8191
+      - uses: ./actions/convert
+        with:
+          from: ckl
+          input: ${{ runner.temp }}/samples/small_ckl_overrides.ckl
+      - uses: ./actions/convert
+        with:
+          from: nessus
+          input: ${{ runner.temp }}/samples/sample.nessus
+      - name: Verify convert exported the Nessus files
+        run: |
+          [[ "$(printf '%s\n' "${SAF_HDF_FILES}" | wc -l)" -eq 3 ]]
+          printf '%s\n' "${SAF_HDF_FILES}" | grep -qx /tmp/saf-reports/nessus-10.0.0.1.json
+      - uses: ./actions/summary
+        with:
+          report_name: nessus-summary
+      - uses: ./actions/threshold
+        with:
+          input: ${{ runner.temp }}/samples/red_hat_good.json
+          template_file: ${{ runner.temp }}/samples/red_hat_good.counts.good.yml
+          report_name: good
+          run_record: "true"
+      - uses: ./actions/threshold
+        with:
+          input: ${{ runner.temp }}/samples/rhel-8_hardened.json
+          template_file: ${{ runner.temp }}/samples/rhel-8_hardened.counts.good.exact.yml
+          report_name: exact
+      - uses: ./actions/threshold
+        with:
+          input: ${{ runner.temp }}/samples/rhel-8_hardened.json
+          template_file: ${{ runner.temp }}/samples/rhel-8_hardened.counts.bad.noimpactHigh.yml
+          report_name: bad
+          report_only: "true"
+          run_record: "true"
+      - uses: ./actions/summary
+        with:
+          input: ${{ runner.temp }}/samples/red_hat_good.json ${{ runner.temp }}/samples/rhel-8_hardened.json
+          formats: json markdown yaml
+      - uses: ./actions/export
+        with:
+          input: ${{ runner.temp }}/samples/red_hat_good.json
+          format: ckl
+          extra_args: --hostname web01 --role Workstation
+      - uses: ./actions/export
+        with:
+          input: ${{ runner.temp }}/samples/red_hat_good.json
+          format: xccdf
+      - uses: ./actions/export
+        with:
+          input: ${{ runner.temp }}/samples/red_hat_good.json
+          format: csv
+      - uses: ./actions/export
+        with:
+          input: ${{ runner.temp }}/samples/red_hat_good.json
+          format: html
+          extra_args: --type Executive
+      - uses: ./actions/export
+        with:
+          input: ${{ runner.temp }}/samples/red_hat_good.json ${{ runner.temp }}/samples/rhel-8_hardened.json
+          format: caat
+          report_name: caat
+      - name: Check what the pipeline wrote
+        run: bash tests/check_pipeline.sh /tmp/saf-reports
+      - id: failing-threshold
+        uses: ./actions/threshold
+        continue-on-error: true
+        with:
+          input: ${{ runner.temp }}/samples/rhel-8_hardened.json
+          template_file: ${{ runner.temp }}/samples/rhel-8_hardened.counts.bad.noimpactHigh.yml
+          output_dir: ${{ runner.temp }}/failing
+          store_artifacts: "false"
+      - id: failing-convert
+        uses: ./actions/convert
+        continue-on-error: true
+        with:
+          from: zap
+          input: ${{ runner.temp }}/samples/sarif_input.sarif
+          extra_args: --name http://mymac.com:8191
+          output_dir: ${{ runner.temp }}/failing
+          store_artifacts: "false"
+      - name: Verify the steps that must fail failed
+        env:
+          THRESHOLD: ${{ steps.failing-threshold.outcome }}
+          CONVERT: ${{ steps.failing-convert.outcome }}
+        run: |
+          [[ "${THRESHOLD}" == failure && "${CONVERT}" == failure ]]
+          jq -e '.failed == 1' "${RUNNER_TEMP}/failing/threshold.json"
+          [[ ! -e "${RUNNER_TEMP}/failing/zap.json" ]]
+      - name: Check the run records against the schema
+        run: |
+          python3 -m pip install --quiet --user jsonschema==4.26.0
+          for record in /tmp/saf-reports/*.run-record.json; do
+            python3 -c 'import json, sys, jsonschema; jsonschema.validate(json.load(open(sys.argv[2])), json.load(open(sys.argv[1])))' \
+              schemas/run-record.v1.json "${record}"
+            jq -e '.ci.provider == "github-actions"' "${record}"
+          done
+
+  # test-deploy.yml's heimdall-test: Heimdall and PostgreSQL in Docker, an
+  # upload with an API key, the evaluations read back, and a wrong key
+  # failing.
+  heimdall:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./actions/install
+      - name: Fetch the SAF CLI's sample data
+        run: bash tests/fetch_samples.sh "${RUNNER_TEMP}/samples"
+      - name: Start Heimdall
+        run: |
+          bash tests/heimdall_server.sh "${RUNNER_TEMP}/heimdall"
+          key=$(cat "${RUNNER_TEMP}/heimdall/api-key")
+          echo "::add-mask::${key}"
+          printf 'HEIMDALL_API_KEY=%s\n' "${key}" >> "${GITHUB_ENV}"
+      - uses: ./actions/convert
+        with:
+          from: sarif
+          input: ${{ runner.temp }}/samples/sarif_input.sarif
+      - uses: ./actions/upload_heimdall
+        with:
+          url: http://localhost:3000
+          input: ${{ runner.temp }}/samples/red_hat_good.json /tmp/saf-reports/sarif.json
+          evaluation_tags: saf-orb,ci ${{ github.run_id }}
+      - name: Read the evaluations back
+        env:
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          [[ "$(wc -w <<< "${HEIMDALL_EVALUATION_URLS}")" -eq 2 ]]
+          for id in $(jq -r '.uploads[].id' /tmp/saf-reports/heimdall.json); do
+            curl -sS --fail -H @"${RUNNER_TEMP}/heimdall/bearer" "http://localhost:3000/evaluations/${id}" \
+              > "${RUNNER_TEMP}/evaluation-${id}.json"
+          done
+          jq -s -e --arg tag "ci ${RUN_ID}" '
+            (map(.filename) | sort) == ["red_hat_good.json", "sarif.json"]
+            and all(.[]; .public == false and ([.evaluationTags[].value] | sort) == ([$tag, "saf-orb"] | sort))' \
+            "${RUNNER_TEMP}"/evaluation-*.json
+      - id: wrong-key
+        uses: ./actions/upload_heimdall
+        continue-on-error: true
+        env:
+          WRONG_KEY: not-a-key
+        with:
+          url: http://localhost:3000
+          api_key: WRONG_KEY
+          input: ${{ runner.temp }}/samples/red_hat_good.json
+          output_dir: ${{ runner.temp }}/failing
+          store_artifacts: "false"
+      - name: Verify a wrong key failed
+        env:
+          WRONG: ${{ steps.wrong-key.outcome }}
+        run: '[[ "${WRONG}" == failure ]]'

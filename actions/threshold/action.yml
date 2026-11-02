@@ -1,0 +1,103 @@
+name: Check HDF results against thresholds with the SAF CLI
+description: >
+  Checks HDF results against compliance thresholds with the SAF CLI's
+  validate threshold: a minimum compliance, and how many controls may pass,
+  fail, go unreviewed or error, overall and by severity. Writes a JSON
+  report with each file's counts and verdict, and JUnit. A file that doesn't
+  meet the thresholds fails the step unless report_only is true. Needs the
+  install action first. The GitHub Actions twin of the orb's threshold
+  command.
+author: juburr
+
+inputs:
+  input:
+    description: >
+      The HDF files to check, each on its own: paths or globs, separated
+      by commas, spaces or newlines. Empty: the files the last convert
+      action wrote (SAF_HDF_FILES). A leading ~ is the home directory,
+      and environment variables are expanded.
+    default: ""
+  template_file:
+    description: >
+      A threshold template: YAML, as saf generate threshold writes it,
+      with keys nested or dotted (failed.critical.max: 0). Set this or
+      template_inline. A key the SAF CLI would skip, such as a
+      misspelled one, fails the step; no_impact.total.min and .max, and
+      a compliance.max of 0, which it skips though saf generate
+      threshold writes them, are checked by this step. A leading ~ is
+      the home directory, and environment variables are expanded.
+    default: ""
+  template_inline:
+    description: >
+      Thresholds in the SAF CLI's inline form, such as "{compliance.min:
+      80}, {failed.critical.max: 0}", in place of template_file.
+    default: ""
+  output_dir:
+    description: >
+      Absolute path of the directory for the reports: <report_name>.json
+      (each file's counts and verdict), junit/<report_name>.xml and the
+      run record.
+    default: "/tmp/saf-reports"
+  report_name:
+    description: >
+      The name every report of this check starts with, so several checks
+      can share output_dir.
+    default: threshold
+  junit:
+    description: >
+      Write junit/<report_name>.xml, a test per HDF file, in output_dir.
+    default: "true"
+  run_record:
+    description: >
+      Write <report_name>.run-record.json: what was checked, against
+      which thresholds, with which SAF CLI, and the verdicts, as
+      described by schemas/run-record.v1.json.
+    default: "false"
+  report_only:
+    description: >
+      Pass even when a file doesn't meet the thresholds, with a warning.
+      A file the SAF CLI can't check still fails the step.
+    default: "false"
+  store_artifacts:
+    description: >
+      Upload output_dir as an artifact, even when the step fails.
+    default: "true"
+
+runs:
+  using: composite
+  steps:
+    # Artifact names must be unique in a workflow run, and the same action
+    # can run in several jobs or matrix legs, so the name ends in a random
+    # suffix.
+    - name: Name the artifact
+      id: artifact
+      if: (inputs.store_artifacts == 'true' || inputs.store_artifacts == '1')
+      shell: bash
+      env:
+        REPORT_NAME: ${{ inputs.report_name }}
+      run: |
+        if [[ ! "${REPORT_NAME}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
+            REPORT_NAME=reports
+        fi
+        printf 'name=saf-reports-%s-%s\n' "${REPORT_NAME}" "$(od -An -tx1 -N4 /dev/urandom | tr -d ' \n')" >> "${GITHUB_OUTPUT}"
+    - name: SAF CLI threshold
+      shell: bash
+      env:
+        PARAM_INPUT: ${{ inputs.input }}
+        PARAM_JUNIT: ${{ inputs.junit }}
+        PARAM_OUTPUT_DIR: ${{ inputs.output_dir }}
+        PARAM_REPORT_NAME: ${{ inputs.report_name }}
+        PARAM_REPORT_ONLY: ${{ inputs.report_only }}
+        PARAM_RUN_RECORD: ${{ inputs.run_record }}
+        PARAM_TEMPLATE_FILE: ${{ inputs.template_file }}
+        PARAM_TEMPLATE_INLINE: ${{ inputs.template_inline }}
+      run: >-
+        bash "${GITHUB_ACTION_PATH}/../run_script.sh" "${GITHUB_ACTION_PATH}/../../src/scripts/threshold.sh"
+        "SCRIPT_SAF_LIB=${GITHUB_ACTION_PATH}/../../src/scripts/lib/saf.sh"
+    - name: Upload the artifact
+      if: always() && (inputs.store_artifacts == 'true' || inputs.store_artifacts == '1')
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        name: ${{ steps.artifact.outputs.name }}
+        path: ${{ inputs.output_dir }}
+        if-no-files-found: ignore

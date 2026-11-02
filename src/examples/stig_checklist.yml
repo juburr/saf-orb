@@ -1,0 +1,40 @@
+description: >
+  Check an OpenSCAP STIG scan against a threshold template, then export it as
+  a STIG Viewer checklist and XCCDF results for an assessor. The template
+  comes from saf generate threshold, run once on a baseline scan and
+  committed with the code; run_record writes what was checked, with which
+  SAF CLI, for the record.
+
+usage:
+  version: 2.1
+  orbs:
+    saf: juburr/saf-orb@0.1.0
+  jobs:
+    stig:
+      machine:
+        image: ubuntu-2404:current
+      steps:
+        - checkout
+        - run:
+            name: Scan with OpenSCAP
+            command: ./scripts/openscap-scan.sh results.xml
+        - saf/install
+        - saf/convert:
+            from: xccdf_results
+            input: results.xml
+            report_name: rhel9
+            store_artifacts: false
+        - saf/threshold:
+            template_file: compliance/rhel9-threshold.yml
+            run_record: true
+            store_artifacts: false
+        - saf/export:
+            format: ckl
+            extra_args: --hostname web01 --fqdn web01.example.com --role "Member Server"
+            store_artifacts: false
+        - saf/export:
+            format: xccdf
+  workflows:
+    stig:
+      jobs:
+        - stig
