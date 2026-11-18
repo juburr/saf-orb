@@ -18,11 +18,14 @@ inputs:
   download_base_url:
     description: >
       An https:// mirror of GitHub Releases to download from in place of
-      https://github.com, such as an Artifactory or Nexus remote
-      repository: the release is fetched from
-      <download_base_url>/mitre/saf/releases/download/<version>/. The
-      checksum table, not the mirror, decides what is installed. It must
-      not hold credentials, a query or a fragment.
+      https://github.com, such as an Artifactory or Nexus remote repository:
+      the release is fetched from
+      <download_base_url>/mitre/saf/releases/download/<version>/. The checksum
+      table, not the mirror, decides what is installed. It must not hold
+      credentials, a query or a fragment. A mirror that needs a login gets it
+      from the entry for its host in the .netrc file (NETRC, or ~/.netrc), and
+      curl sends it to the mirror alone, never to a host the mirror redirects
+      to.
     default: ""
   install_path:
     description: >

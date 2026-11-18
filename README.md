@@ -100,7 +100,7 @@ flowchart LR
 version: 2.1
 
 orbs:
-  saf: juburr/saf-orb@0.1.0
+  saf: juburr/saf-orb@0.2.0
 
 jobs:
   scan:
@@ -139,13 +139,13 @@ jobs:
           persist-credentials: false
       - name: Scan with Grype
         run: grype dir:. -o json > grype.json
-      - uses: juburr/saf-orb/actions/install@v0.1.0
-      - uses: juburr/saf-orb/actions/convert@v0.1.0
+      - uses: juburr/saf-orb/actions/install@v0.2.0
+      - uses: juburr/saf-orb/actions/convert@v0.2.0
         with:
           from: anchoregrype
           input: grype.json
-      - uses: juburr/saf-orb/actions/summary@v0.1.0
-      - uses: juburr/saf-orb/actions/threshold@v0.1.0
+      - uses: juburr/saf-orb/actions/summary@v0.2.0
+      - uses: juburr/saf-orb/actions/threshold@v0.2.0
         with:
           template_inline: "{failed.critical.max: 0}, {failed.high.max: 0}"
 ```
@@ -229,7 +229,7 @@ Every parameter that names a value expands environment variables, except `output
 | `verify_checksums` | `strict` | `strict` refuses a release the table doesn't list, before downloading; `known_versions` installs it unverified, with a warning; `false` verifies nothing. |
 | `install_path` | `$HOME/.saf-orb` | The installation's root; its `bin`, which holds only the `saf` launcher, goes on the `PATH` of later steps. |
 | `caching` | `true` | Cache the verified release between jobs. |
-| `download_base_url` | | An `https://` mirror of GitHub Releases, such as Artifactory. The table still decides what is installed. |
+| `download_base_url` | | An `https://` mirror of GitHub Releases, such as Artifactory. The table still decides what is installed. A mirror that needs a login gets the `.netrc` entry for its host; see [Mirrors That Need a Login](#-mirrors-that-need-a-login). |
 
 ### `saf/convert`
 
@@ -304,12 +304,12 @@ Every command has a composite action of the same name, with the same inputs and 
 
 | Action | Command |
 |---|---|
-| `juburr/saf-orb/actions/install@v0.1.0` | `install` |
-| `juburr/saf-orb/actions/convert@v0.1.0` | `convert` |
-| `juburr/saf-orb/actions/threshold@v0.1.0` | `threshold` |
-| `juburr/saf-orb/actions/summary@v0.1.0` | `summary` |
-| `juburr/saf-orb/actions/export@v0.1.0` | `export` |
-| `juburr/saf-orb/actions/upload_heimdall@v0.1.0` | `upload_heimdall` |
+| `juburr/saf-orb/actions/install@v0.2.0` | `install` |
+| `juburr/saf-orb/actions/convert@v0.2.0` | `convert` |
+| `juburr/saf-orb/actions/threshold@v0.2.0` | `threshold` |
+| `juburr/saf-orb/actions/summary@v0.2.0` | `summary` |
+| `juburr/saf-orb/actions/export@v0.2.0` | `export` |
+| `juburr/saf-orb/actions/upload_heimdall@v0.2.0` | `upload_heimdall` |
 
 What one action exports, later steps see, as with CircleCI's `BASH_ENV`, so `SAF_HDF_FILES` reaches the actions after `convert`. A few differences:
 
@@ -317,7 +317,7 @@ What one action exports, later steps see, as with CircleCI's `BASH_ENV`, so `SAF
 - **Environment variables aren't expanded in inputs.** Use `${{ env.NAME }}` instead.
 - **The API key** goes in the `env` of the step that uses `upload_heimdall`, from a secret: `env: HEIMDALL_API_KEY: ${{ secrets.HEIMDALL_API_KEY }}`.
 - **Reports are uploaded as artifacts** named `saf-reports-<report_name>-<random>`.
-- **Pin the actions to a commit SHA** for the strongest guarantee: `juburr/saf-orb/actions/threshold@<sha> # v0.1.0`.
+- **Pin the actions to a commit SHA** for the strongest guarantee: `juburr/saf-orb/actions/threshold@<sha> # v0.2.0`.
 
 ## 🔒 Secure by Design
 
@@ -333,6 +333,30 @@ What one action exports, later steps see, as with CircleCI's `BASH_ENV`, so `SAF
 
 - **Executors.** Linux on amd64 or arm64, with bash 4, curl or wget, tar, jq, and `dpkg-deb` or `ar` with `zstd` or `xz`: `cimg/base`, CircleCI's machine images, and GitHub's Ubuntu runners. No Node.js is needed.
 - **SAF CLI.** 1.7.0 (the default, with Node.js 22) and 1.5.3 (with Node.js 20, past its end of life). 1.5.3 has no `checkov` converter and no `html` export. CI tests 1.7.0 on both architectures, and 1.5.3's install.
+
+## 🔑 Mirrors That Need a Login
+
+`download_base_url` points the install at an internal mirror, such as an Artifactory remote repository. When the mirror needs a login, the install takes it from the entry for the mirror's host in the `.netrc` file (`NETRC`, or `~/.netrc`), which an earlier step writes, such as from a context's variables. Artifactory takes an access token as the password.
+
+```yaml
+- run:
+    name: Log In to the Mirror
+    command: |
+      umask 077
+      printf 'machine %s login %s password %s\n' artifactory.example.com "${ARTIFACTORY_USER}" "${ARTIFACTORY_TOKEN}" >> ~/.netrc
+```
+
+`printf` is a shell builtin, so the token never reaches a command line.
+
+How the login is kept to the mirror:
+
+- **One entry, in a private file.** The install copies the first complete entry for the mirror's host, alone, into a file only the job's user can read, and gives that file to curl. curl never reads the rest of your `.netrc`: not a `default` entry, not an entry without a password (curl 7.76.0 to 8.11.1 could send a password on to a host the server redirects to, CVE-2024-11053 and CVE-2025-0167, when the `.netrc` held either), and not a token for another host, such as `github.com`.
+- **Only for the mirror.** curl gets the file only for URLs under the mirror. Downloads from anywhere else get no login.
+- **Never past a redirect.** When the mirror redirects a download to another host, such as the cloud storage an Artifactory keeps its files in, that host gets no login, even when a `~/.curlrc` says `location-trusted`.
+- **curl only.** wget reads every entry in `~/.netrc` and can't be limited to one, so an install that would send a mirror login with wget fails and asks for curl.
+- **Out of the log.** The log names the `.netrc` file and the host, never the login. A `.netrc` other users can read is reported.
+
+An entry the install can't use as curl would, one without a login or password or with a quoted value, is reported, and the mirror is then asked without a login. A mirror that refuses a download without one is reported with the entry it needs.
 
 ## 🔐 Checksum Verification
 
