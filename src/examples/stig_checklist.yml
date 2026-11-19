@@ -8,7 +8,7 @@ description: >
 usage:
   version: 2.1
   orbs:
-    saf: juburr/saf-orb@0.1.0
+    saf: juburr/saf-orb@0.2.0
   jobs:
     stig:
       machine:
